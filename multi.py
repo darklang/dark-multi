@@ -29,12 +29,18 @@ Usage:
 """
 
 import argparse
+import http.server
 import os
 import re
 import shutil
+import signal
+import socketserver
 import subprocess
 import sys
+import threading
 import time
+import urllib.request
+import urllib.error
 from datetime import datetime
 from pathlib import Path
 
@@ -43,6 +49,8 @@ DARK_ROOT = Path(os.environ.get("DARK_ROOT", Path.home() / "code" / "dark"))
 DARK_SOURCE = Path(os.environ.get("DARK_SOURCE", DARK_ROOT))
 CONFIG_DIR = Path(os.environ.get("DARK_MULTI_CONFIG", Path.home() / ".config" / "dark-multi"))
 TMUX_SESSION = "dark"
+PROXY_PORT = int(os.environ.get("DARK_MULTI_PROXY_PORT", 9000))
+PROXY_PID_FILE = CONFIG_DIR / "proxy.pid"
 
 # Resource estimation
 RAM_PER_INSTANCE_GB = 6
@@ -102,6 +110,196 @@ def run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
     kwargs.setdefault("capture_output", True)
     kwargs.setdefault("text", True)
     return subprocess.run(cmd, **kwargs)
+
+
+class DarkProxyHandler(http.server.BaseHTTPRequestHandler):
+    """Proxy that routes requests to branch-specific ports based on hostname.
+
+    URL scheme: <canvas>.<branch>.dlio.localhost:<proxy_port>
+    Example: dark-packages.main.dlio.localhost:9000 → localhost:11101
+
+    The proxy:
+    1. Extracts branch name from hostname (e.g., 'main' from 'dark-packages.main.dlio.localhost')
+    2. Looks up the branch's BwdServer port
+    3. Forwards the request with proper Host header (e.g., 'dark-packages.dlio.localhost')
+    """
+
+    # Cache of branch name → port mappings
+    branch_ports = {}
+
+    @classmethod
+    def refresh_branch_ports(cls):
+        """Refresh the branch → port cache."""
+        cls.branch_ports = {}
+        for branch in get_managed_branches():
+            if branch.is_running:
+                cls.branch_ports[branch.name] = branch.bwd_port_base
+
+    def log_message(self, format, *args):
+        """Suppress default logging."""
+        pass
+
+    def do_GET(self):
+        self._proxy_request()
+
+    def do_POST(self):
+        self._proxy_request()
+
+    def do_PUT(self):
+        self._proxy_request()
+
+    def do_DELETE(self):
+        self._proxy_request()
+
+    def do_HEAD(self):
+        self._proxy_request()
+
+    def _proxy_request(self):
+        host = self.headers.get("Host", "")
+
+        # Parse hostname: <canvas>.<branch>.dlio.localhost
+        # e.g., dark-packages.main.dlio.localhost → branch=main, canvas_host=dark-packages.dlio.localhost
+        parts = host.split(".")
+        if len(parts) >= 4 and parts[-2:] == ["dlio", "localhost"] or (len(parts) >= 3 and "localhost" in parts[-1]):
+            # Try to find branch name - it's the second-to-last segment before dlio.localhost
+            # dark-packages.main.dlio.localhost → ['dark-packages', 'main', 'dlio', 'localhost']
+            try:
+                if "dlio" in parts:
+                    dlio_idx = parts.index("dlio")
+                    if dlio_idx >= 2:
+                        branch_name = parts[dlio_idx - 1]
+                        canvas_parts = parts[:dlio_idx - 1] + parts[dlio_idx:]
+                        canvas_host = ".".join(canvas_parts)
+                    else:
+                        self._send_error(400, f"Invalid hostname format: {host}")
+                        return
+                else:
+                    self._send_error(400, f"Invalid hostname format: {host}")
+                    return
+            except (ValueError, IndexError):
+                self._send_error(400, f"Invalid hostname format: {host}")
+                return
+        else:
+            self._send_error(400, f"Invalid hostname format: {host}\nExpected: <canvas>.<branch>.dlio.localhost")
+            return
+
+        # Look up port for branch
+        if branch_name not in self.branch_ports:
+            # Refresh cache and try again
+            self.refresh_branch_ports()
+
+        if branch_name not in self.branch_ports:
+            self._send_error(404, f"Branch '{branch_name}' not running.\nRunning branches: {list(self.branch_ports.keys())}")
+            return
+
+        port = self.branch_ports[branch_name]
+
+        # Forward request
+        try:
+            url = f"http://localhost:{port}{self.path}"
+
+            # Read request body if present
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length) if content_length > 0 else None
+
+            # Build request with modified Host header
+            req = urllib.request.Request(url, data=body, method=self.command)
+            for key, value in self.headers.items():
+                if key.lower() not in ("host", "content-length"):
+                    req.add_header(key, value)
+            req.add_header("Host", canvas_host)
+
+            # Make request
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                self.send_response(resp.status)
+                for key, value in resp.getheaders():
+                    if key.lower() not in ("transfer-encoding",):
+                        self.send_header(key, value)
+                self.end_headers()
+                self.wfile.write(resp.read())
+
+        except urllib.error.HTTPError as e:
+            self.send_response(e.code)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(e.read())
+        except urllib.error.URLError as e:
+            self._send_error(502, f"Backend error: {e.reason}")
+        except Exception as e:
+            self._send_error(500, f"Proxy error: {e}")
+
+    def _send_error(self, code: int, message: str):
+        self.send_response(code)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(message.encode())
+
+
+def start_proxy_server(port: int = PROXY_PORT, background: bool = True) -> int | None:
+    """Start the proxy server. Returns PID if backgrounded."""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+    if background:
+        # Fork to background
+        pid = os.fork()
+        if pid > 0:
+            # Parent - save PID and return
+            PROXY_PID_FILE.write_text(str(pid))
+            return pid
+        else:
+            # Child - become daemon
+            os.setsid()
+            # Close standard file descriptors
+            sys.stdin.close()
+            sys.stdout.close()
+            sys.stderr.close()
+
+    # Refresh branch ports
+    DarkProxyHandler.refresh_branch_ports()
+
+    # Start server
+    with socketserver.TCPServer(("", port), DarkProxyHandler) as httpd:
+        httpd.serve_forever()
+
+    return None
+
+
+def stop_proxy_server() -> bool:
+    """Stop the proxy server if running."""
+    if not PROXY_PID_FILE.exists():
+        return False
+
+    try:
+        pid = int(PROXY_PID_FILE.read_text().strip())
+        os.kill(pid, signal.SIGTERM)
+        PROXY_PID_FILE.unlink()
+        return True
+    except (ProcessLookupError, ValueError):
+        PROXY_PID_FILE.unlink(missing_ok=True)
+        return False
+
+
+def is_proxy_running() -> int | None:
+    """Check if proxy is running. Returns PID if running."""
+    if not PROXY_PID_FILE.exists():
+        return None
+
+    try:
+        pid = int(PROXY_PID_FILE.read_text().strip())
+        os.kill(pid, 0)  # Check if process exists
+        return pid
+    except (ProcessLookupError, ValueError):
+        PROXY_PID_FILE.unlink(missing_ok=True)
+        return None
+
+
+def ensure_proxy_running() -> None:
+    """Start proxy if not already running."""
+    if is_proxy_running():
+        return
+    pid = start_proxy_server(PROXY_PORT, background=True)
+    if pid:
+        log(f"Started proxy on port {PROXY_PORT} (PID {pid})")
 
 
 class Branch:
@@ -561,8 +759,12 @@ def cmd_new(args) -> int:
         log("Opening VS Code...")
         open_vscode(branch)
 
+    # Ensure proxy is running for URL access
+    ensure_proxy_running()
+
     success(f"Branch '{name}' ready!")
-    print("\nAttach tmux: multi")
+    print(f"\nAttach tmux: multi")
+    print(f"URLs: multi urls")
     return 0
 
 
@@ -621,6 +823,9 @@ def cmd_start(args) -> int:
     if not args.no_code:
         log("Opening VS Code...")
         open_vscode(branch)
+
+    # Ensure proxy is running for URL access
+    ensure_proxy_running()
 
     success(f"Branch '{name}' running")
     return 0
@@ -796,6 +1001,94 @@ def cmd_attach(args) -> int:
     return 0
 
 
+def cmd_proxy(args) -> int:
+    """Start/stop/status the URL proxy server."""
+    action = args.action
+
+    if action == "start":
+        pid = is_proxy_running()
+        if pid:
+            warn(f"Proxy already running (PID {pid})")
+            return 0
+
+        log(f"Starting proxy on port {PROXY_PORT}...")
+        pid = start_proxy_server(PROXY_PORT, background=True)
+        success(f"Proxy started (PID {pid})")
+        print()
+        print("Add to /etc/hosts:")
+        for branch in get_managed_branches():
+            if branch.is_running:
+                print(f"  127.0.0.1 dark-packages.{branch.name}.dlio.localhost")
+        print()
+        print(f"Then access: http://dark-packages.<branch>.dlio.localhost:{PROXY_PORT}/ping")
+        return 0
+
+    elif action == "stop":
+        if stop_proxy_server():
+            success("Proxy stopped")
+        else:
+            warn("Proxy not running")
+        return 0
+
+    elif action == "status":
+        pid = is_proxy_running()
+        if pid:
+            print(f"Proxy running (PID {pid}) on port {PROXY_PORT}")
+        else:
+            print("Proxy not running")
+        return 0
+
+    elif action == "fg":
+        # Run in foreground (for debugging)
+        pid = is_proxy_running()
+        if pid:
+            warn(f"Proxy already running in background (PID {pid})")
+            return 1
+        log(f"Starting proxy on port {PROXY_PORT} (foreground)...")
+        start_proxy_server(PROXY_PORT, background=False)
+        return 0
+
+    return 1
+
+
+def cmd_urls(args) -> int:
+    """List available URLs for running branches."""
+    branches = get_managed_branches()
+    running = [b for b in branches if b.is_running]
+
+    if not running:
+        print("No running branches.")
+        return 0
+
+    proxy_pid = is_proxy_running()
+    proxy_status = f"running (PID {proxy_pid})" if proxy_pid else "not running"
+
+    print(f"Proxy: {proxy_status}")
+    print(f"Port: {PROXY_PORT}")
+    print()
+
+    print("Running branches:")
+    for b in running:
+        print()
+        print(f"  {Colors.BOLD}{b.name}{Colors.NC} (ID={b.instance_id})")
+        print(f"    Direct:  curl -H 'Host: dark-packages.dlio.localhost' http://localhost:{b.bwd_port_base}/ping")
+        if proxy_pid:
+            print(f"    Proxy:   http://dark-packages.{b.name}.dlio.localhost:{PROXY_PORT}/ping")
+        print(f"    BwdServer ports: {b.bwd_port_base}-{b.bwd_port_base + 1}")
+        print(f"    Test ports: {b.port_base}-{b.port_base + 19}")
+
+    if not proxy_pid:
+        print()
+        print("Start proxy for nice URLs: multi proxy start")
+
+    print()
+    print("To use in browser, add to /etc/hosts:")
+    for b in running:
+        print(f"  127.0.0.1 dark-packages.{b.name}.dlio.localhost")
+
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Manage multiple Dark devcontainer instances",
@@ -810,12 +1103,15 @@ Examples:
   multi stop fix-parser      Stop branch (keeps files)
   multi rm fix-parser        Remove branch entirely
   multi code fix-parser      Open VS Code for branch
+  multi urls                 List available URLs for branches
+  multi proxy start          Start the URL proxy server
 """
     )
 
     sub = parser.add_subparsers(dest="cmd")
 
     sub.add_parser("ls", help="List branches")
+    sub.add_parser("urls", help="List available URLs for branches")
 
     new_p = sub.add_parser("new", help="Create new branch")
     new_p.add_argument("branch", help="Branch name")
@@ -836,6 +1132,9 @@ Examples:
     code_p = sub.add_parser("code", help="Open VS Code for branch")
     code_p.add_argument("branch", help="Branch name")
 
+    proxy_p = sub.add_parser("proxy", help="Manage URL proxy server")
+    proxy_p.add_argument("action", choices=["start", "stop", "status", "fg"], help="Action")
+
     args = parser.parse_args()
 
     if args.cmd == "ls":
@@ -850,6 +1149,10 @@ Examples:
         return cmd_rm(args)
     elif args.cmd == "code":
         return cmd_code(args)
+    elif args.cmd == "urls":
+        return cmd_urls(args)
+    elif args.cmd == "proxy":
+        return cmd_proxy(args)
     else:
         return cmd_attach(args)
 

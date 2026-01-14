@@ -138,9 +138,36 @@ main (ID=1): localhost:11101 → pong
 test (ID=2): localhost:11201 → pang (after code change)
 ```
 
+## URL Proxy
+
+Built-in Python proxy for nice URLs without manual Host headers.
+
+**Commands:**
+```bash
+multi proxy start    # Start proxy (auto-starts with new/start)
+multi proxy stop     # Stop proxy
+multi proxy status   # Check if running
+multi urls           # List all available URLs
+```
+
+**URL scheme:** `<canvas>.<branch>.dlio.localhost:9000`
+- `dark-packages.main.dlio.localhost:9000` → main's BwdServer
+- `dark-packages.test.dlio.localhost:9000` → test's BwdServer
+
+**Setup for browser:**
+```bash
+# Add to /etc/hosts (one-time)
+127.0.0.1 dark-packages.main.dlio.localhost
+127.0.0.1 dark-packages.test.dlio.localhost
+```
+
+Then visit: `http://dark-packages.main.dlio.localhost:9000/ping`
+
 ## Recent Changes
 
 1. Switched from modifying repo's devcontainer.json to override config approach
 2. Added `-p` port publishing so ports accessible without VS Code
 3. Merged original devcontainer.json with overrides (preserves build section, etc.)
 4. Override configs stored in ~/.config/dark-multi/overrides/
+5. Added Python proxy for nice URLs (auto-starts with containers)
+6. Added `multi urls` to list available endpoints
