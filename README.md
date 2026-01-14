@@ -131,9 +131,29 @@ multi start fix-parser
 multi rm fix-parser
 ```
 
+## Browser Access (BwdServer)
+
+Each branch's BwdServer is accessible via the URL proxy:
+
+```bash
+# One-time DNS setup (configures dnsmasq for wildcard *.dlio.localhost)
+multi setup-dns
+
+# Proxy starts automatically with containers, or manually:
+multi proxy start
+
+# List URLs for running branches
+multi urls
+```
+
+Then access canvases at: `http://dark-packages.<branch>.dlio.localhost:9000/ping`
+
+**TODO**: Currently requires `:9000` in URL. Future: add port 80 redirect via iptables/pf.
+
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DARK_ROOT` | `~/code/dark` | Where branches live |
 | `DARK_SOURCE` | `~/code/dark` | Repo to clone from |
+| `DARK_MULTI_PROXY_PORT` | `9000` | Proxy server port |

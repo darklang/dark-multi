@@ -31,13 +31,11 @@ Usage:
 import argparse
 import http.server
 import os
-import re
 import shutil
 import signal
 import socketserver
 import subprocess
 import sys
-import threading
 import time
 import urllib.request
 import urllib.error
@@ -160,25 +158,14 @@ class DarkProxyHandler(http.server.BaseHTTPRequestHandler):
         # Parse hostname: <canvas>.<branch>.dlio.localhost
         # e.g., dark-packages.main.dlio.localhost → branch=main, canvas_host=dark-packages.dlio.localhost
         parts = host.split(".")
-        if len(parts) >= 4 and parts[-2:] == ["dlio", "localhost"] or (len(parts) >= 3 and "localhost" in parts[-1]):
-            # Try to find branch name - it's the second-to-last segment before dlio.localhost
-            # dark-packages.main.dlio.localhost → ['dark-packages', 'main', 'dlio', 'localhost']
-            try:
-                if "dlio" in parts:
-                    dlio_idx = parts.index("dlio")
-                    if dlio_idx >= 2:
-                        branch_name = parts[dlio_idx - 1]
-                        canvas_parts = parts[:dlio_idx - 1] + parts[dlio_idx:]
-                        canvas_host = ".".join(canvas_parts)
-                    else:
-                        self._send_error(400, f"Invalid hostname format: {host}")
-                        return
-                else:
-                    self._send_error(400, f"Invalid hostname format: {host}")
-                    return
-            except (ValueError, IndexError):
-                self._send_error(400, f"Invalid hostname format: {host}")
-                return
+        # Must have at least 4 parts and end with dlio.localhost
+        if len(parts) >= 4 and parts[-2:] == ["dlio", "localhost"]:
+            # branch is second-to-last before dlio.localhost
+            # ['dark-packages', 'main', 'dlio', 'localhost'] → branch='main'
+            dlio_idx = parts.index("dlio")
+            branch_name = parts[dlio_idx - 1]
+            canvas_parts = parts[:dlio_idx - 1] + parts[dlio_idx:]
+            canvas_host = ".".join(canvas_parts)
         else:
             self._send_error(400, f"Invalid hostname format: {host}\nExpected: <canvas>.<branch>.dlio.localhost")
             return
@@ -1015,12 +1002,8 @@ def cmd_proxy(args) -> int:
         pid = start_proxy_server(PROXY_PORT, background=True)
         success(f"Proxy started (PID {pid})")
         print()
-        print("Add to /etc/hosts:")
-        for branch in get_managed_branches():
-            if branch.is_running:
-                print(f"  127.0.0.1 dark-packages.{branch.name}.dlio.localhost")
-        print()
-        print(f"Then access: http://dark-packages.<branch>.dlio.localhost:{PROXY_PORT}/ping")
+        print(f"For browser access, run: multi setup-dns (one-time)")
+        print(f"Then visit: http://dark-packages.<branch>.dlio.localhost:{PROXY_PORT}/ping")
         return 0
 
     elif action == "stop":
@@ -1082,10 +1065,7 @@ def cmd_urls(args) -> int:
         print("Start proxy for nice URLs: multi proxy start")
 
     print()
-    print("To use in browser, run: multi setup-dns (one-time)")
-    print("Or manually add to /etc/hosts:")
-    for b in running:
-        print(f"  127.0.0.1 dark-packages.{b.name}.dlio.localhost")
+    print("For browser access, run: multi setup-dns (one-time)")
 
     return 0
 
