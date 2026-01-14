@@ -23,6 +23,9 @@ multi start <branch>     # Start stopped branch
 multi stop <branch>      # Stop (keeps files)
 multi rm <branch>        # Full cleanup
 multi code <branch>      # Open VS Code
+multi urls               # List available URLs
+multi proxy start        # Start URL proxy
+multi setup-dns          # One-time wildcard DNS setup
 ```
 
 ## Architecture
@@ -59,9 +62,8 @@ Then: `http://dark-packages.dlio.localhost:11101/ping`
 
 ## TODO / Future Work
 
-1. **Nice hostnames per branch**: Set up local proxy (Caddy/nginx) to route `dark-packages.main.dlio.localhost` → `localhost:11101`, etc.
-2. **Auto /etc/hosts management**: Optionally manage host entries (needs sudo)
-3. **Branch-specific canvas routing**: Figure out URL scheme like `dark-main-packages.dlio.localhost`
+1. **Refactor multi.py**: Split into modules (cli.py, tmux.py, proxy.py, dns.py, etc.) - it's getting large
+2. **More canvas types**: Currently assumes `dark-packages` canvas; support listing/selecting canvases per branch
 
 ## Key Files
 
@@ -156,12 +158,12 @@ multi urls           # List all available URLs
 
 **Setup for browser:**
 ```bash
-# Add to /etc/hosts (one-time)
-127.0.0.1 dark-packages.main.dlio.localhost
-127.0.0.1 dark-packages.test.dlio.localhost
+multi setup-dns    # One-time wildcard DNS setup
 ```
 
 Then visit: `http://dark-packages.main.dlio.localhost:9000/ping`
+
+Any new branch automatically works - no /etc/hosts editing needed.
 
 ## Recent Changes
 
@@ -171,3 +173,4 @@ Then visit: `http://dark-packages.main.dlio.localhost:9000/ping`
 4. Override configs stored in ~/.config/dark-multi/overrides/
 5. Added Python proxy for nice URLs (auto-starts with containers)
 6. Added `multi urls` to list available endpoints
+7. Added `multi setup-dns` for wildcard DNS (dnsmasq) - works on Linux and macOS
