@@ -69,7 +69,7 @@ Then: `http://dark-packages.dlio.localhost:11101/ping`
 
 ```
 multi.py                    # Entry point (thin wrapper)
-darkmulti/
+dark_multi/
 ├── __init__.py             # Package init
 ├── cli.py                  # Argparse + main()
 ├── config.py               # Constants, colors, logging
@@ -114,7 +114,7 @@ Container (always same)     Host (branch-specific)
 ```
 
 ### Implementation
-1. **Override config generation** (`darkmulti/devcontainer.py`):
+1. **Override config generation** (`dark_multi/devcontainer.py`):
    - Reads original `devcontainer.json` from the repo
    - Merges in branch-specific `-p` port mappings in `runArgs`
    - Writes to `~/.config/dark-multi/overrides/<branch>/devcontainer.json`
@@ -188,4 +188,4 @@ Any new branch automatically works - no /etc/hosts editing needed.
 5. Added Python proxy for nice URLs (auto-starts with containers)
 6. Added `multi urls` to list available endpoints
 7. Added `multi setup-dns` for wildcard DNS (dnsmasq) - works on Linux and macOS
-8. Refactored into `darkmulti/` package with focused modules
+8. Refactored into `dark_multi/` package with focused modules

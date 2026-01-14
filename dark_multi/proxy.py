@@ -57,6 +57,10 @@ class DarkProxyHandler(http.server.BaseHTTPRequestHandler):
     def _proxy_request(self):
         host = self.headers.get("Host", "")
 
+        # Strip port if present (e.g., "host:9000" -> "host")
+        if ":" in host:
+            host = host.split(":")[0]
+
         # Parse hostname: <canvas>.<branch>.dlio.localhost
         # e.g., dark-packages.main.dlio.localhost -> branch=main, canvas_host=dark-packages.dlio.localhost
         parts = host.split(".")
@@ -138,10 +142,12 @@ def start_proxy_server(port: int = PROXY_PORT, background: bool = True) -> int |
         else:
             # Child - become daemon
             os.setsid()
-            # Close standard file descriptors
-            sys.stdin.close()
-            sys.stdout.close()
-            sys.stderr.close()
+            # Redirect stdio to /dev/null
+            devnull = os.open(os.devnull, os.O_RDWR)
+            os.dup2(devnull, 0)  # stdin
+            os.dup2(devnull, 1)  # stdout
+            os.dup2(devnull, 2)  # stderr
+            os.close(devnull)
 
     # Refresh branch ports
     DarkProxyHandler.refresh_branch_ports()

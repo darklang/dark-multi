@@ -2,11 +2,11 @@
 """
 Dark Multi - Manage multiple Dark devcontainer instances.
 
-See darkmulti/ package for implementation.
+See dark_multi/ package for implementation.
 """
 
 import sys
-from darkmulti import main
+from dark_multi import main
 
 if __name__ == "__main__":
     sys.exit(main())
