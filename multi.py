@@ -41,6 +41,7 @@ from pathlib import Path
 # Configuration
 DARK_ROOT = Path(os.environ.get("DARK_ROOT", Path.home() / "code" / "dark"))
 DARK_SOURCE = Path(os.environ.get("DARK_SOURCE", DARK_ROOT))
+CONFIG_DIR = Path(os.environ.get("DARK_MULTI_CONFIG", Path.home() / ".config" / "dark-multi"))
 TMUX_SESSION = "dark"
 
 # Resource estimation
@@ -348,73 +349,99 @@ def find_source_repo() -> Path | None:
     return None
 
 
-def modify_devcontainer(path: Path, branch: Branch) -> None:
-    """Modify devcontainer.json for this branch."""
-    devcontainer = path / ".devcontainer" / "devcontainer.json"
-    if not devcontainer.exists():
-        return
+def get_override_config_path(branch: Branch) -> Path:
+    """Get path to override config for a branch."""
+    return CONFIG_DIR / "overrides" / branch.name / "devcontainer.json"
 
-    content = devcontainer.read_text()
 
-    # Port calculation - these are the HOST ports we'll expose
-    # Container always uses standard ports (11001, 11002, 10011-10030)
-    # We map them to branch-specific host ports
-    host_ports = [branch.port_base + i for i in range(20)] + [branch.bwd_port_base, branch.bwd_port_base + 1]
-    ports_str = "[" + ", ".join(map(str, host_ports)) + "]"
+def generate_override_config(branch: Branch) -> Path:
+    """Generate a devcontainer override config for this branch.
 
-    # Update forwardPorts (for VS Code)
-    content = re.sub(r'"forwardPorts": \[.*?\]', f'"forwardPorts": {ports_str}', content)
+    This reads the original devcontainer.json and merges in branch-specific
+    overrides for ports, container name, etc. The original file is untouched.
+    """
+    import json
 
-    # Update hostname
-    content = re.sub(r'"dark-dev"', f'"dark-{branch.name}"', content)
+    override_dir = CONFIG_DIR / "overrides" / branch.name
+    override_dir.mkdir(parents=True, exist_ok=True)
+    override_path = override_dir / "devcontainer.json"
 
-    # Update label for container discovery
-    content = re.sub(r'"dark-dev-container"', f'"dark-dev-container={branch.name}"', content)
+    # Read original devcontainer.json
+    original_path = branch.path / ".devcontainer" / "devcontainer.json"
+    if not original_path.exists():
+        error(f"No devcontainer.json found at {original_path}")
+        return None
 
-    # Update container name in devcontainer
-    content = re.sub(r'"name": "dark-builder"', f'"name": "dark-{branch.name}"', content)
-
-    # Add --name for Docker container naming (insert after --workdir line)
-    if f'"--name"' not in content:
-        content = re.sub(
-            r'("--workdir",\s*"/home/dark/app")',
-            rf'\1,\n    "--name",\n    "dark-{branch.name}"',
-            content
-        )
-
-    # Add -p port publishing for host access without VS Code
-    # Map container's standard ports to branch-specific host ports
-    # BwdServer: container 11001 → host bwd_port_base, container 11002 → host bwd_port_base+1
-    # Test ports: container 10011-10030 → host port_base to port_base+19
-    if '"-p"' not in content:
-        port_mappings = []
-        # BwdServer ports
-        port_mappings.append(f'"-p", "{branch.bwd_port_base}:11001"')
-        port_mappings.append(f'"-p", "{branch.bwd_port_base + 1}:11002"')
-        # Test server ports (10011-10030 → port_base+0 to port_base+19)
-        for i in range(20):
-            port_mappings.append(f'"-p", "{branch.port_base + i}:{10011 + i}"')
-
-        port_args = ",\n    ".join(port_mappings)
-        content = re.sub(
-            r'("--name",\s*"dark-' + branch.name + r'")',
-            rf'\1,\n    {port_args}',
-            content
-        )
-
-    # Make volumes per-instance to avoid conflicts between clones
-    content = re.sub(r'"dark_nuget"', f'"dark_nuget_{branch.name}"', content)
-    content = re.sub(r'"darklang-dark-extension-volume"', f'"dark-vscode-ext-{branch.name}"', content)
-    content = re.sub(r'"darklang-dark-extension-volume-insiders"', f'"dark-vscode-ext-insiders-{branch.name}"', content)
-
-    # Remove conflicting volumes
-    lines = [l for l in content.split("\n")
-             if "dark_build" not in l
-             and "tree-sitter-build" not in l
-             and "tree-sitter-node-modules" not in l]
+    # Parse JSON (strip comments first - devcontainer.json allows them)
+    content = original_path.read_text()
+    # Remove // comments
+    lines = []
+    for line in content.split("\n"):
+        stripped = line.lstrip()
+        if not stripped.startswith("//"):
+            # Also remove inline comments (crude but works for this format)
+            if "//" in line and '"' not in line.split("//")[1]:
+                line = line.split("//")[0].rstrip()
+            lines.append(line)
     content = "\n".join(lines)
 
-    devcontainer.write_text(content)
+    try:
+        config = json.loads(content)
+    except json.JSONDecodeError as e:
+        error(f"Failed to parse devcontainer.json: {e}")
+        return None
+
+    # Build port mappings: map container's standard ports to branch-specific host ports
+    port_args = []
+    # BwdServer: container 11001,11002 → host bwd_port_base, bwd_port_base+1
+    port_args.extend(["-p", f"{branch.bwd_port_base}:11001"])
+    port_args.extend(["-p", f"{branch.bwd_port_base + 1}:11002"])
+    # Test server ports: container 10011-10030 → host port_base+0 to port_base+19
+    for i in range(20):
+        port_args.extend(["-p", f"{branch.port_base + i}:{10011 + i}"])
+
+    # Host ports for forwardPorts (VS Code)
+    host_ports = [branch.port_base + i for i in range(20)] + [branch.bwd_port_base, branch.bwd_port_base + 1]
+
+    # Apply overrides
+    config["name"] = f"dark-{branch.name}"
+    config["forwardPorts"] = host_ports
+
+    # Merge runArgs - keep original args, add our overrides
+    original_run_args = config.get("runArgs", [])
+    # Filter out any existing hostname/label/name args
+    filtered_args = []
+    skip_next = False
+    for i, arg in enumerate(original_run_args):
+        if skip_next:
+            skip_next = False
+            continue
+        if arg in ["--hostname", "--label", "--name", "-p"]:
+            skip_next = True  # Skip this and next arg
+            continue
+        if arg.startswith("--hostname=") or arg.startswith("--label=") or arg.startswith("--name=") or arg.startswith("-p="):
+            continue
+        filtered_args.append(arg)
+
+    # Add our args
+    config["runArgs"] = [
+        *filtered_args,
+        "--hostname", f"dark-{branch.name}",
+        "--label", f"dark-dev-container={branch.name}",
+        "--name", f"dark-{branch.name}",
+        *port_args
+    ]
+
+    # Override mounts with branch-specific volumes
+    config["mounts"] = [
+        f"type=volume,src=dark_nuget_{branch.name},dst=/home/dark/.nuget",
+        f"type=volume,src=dark-vscode-ext-{branch.name},dst=/home/dark/.vscode-server/extensions",
+        f"type=volume,src=dark-vscode-ext-insiders-{branch.name},dst=/home/dark/.vscode-server-insiders/extensions"
+    ]
+
+    # Write merged config
+    override_path.write_text(json.dumps(config, indent=2))
+    return override_path
 
 
 def get_managed_branches() -> list[Branch]:
@@ -499,8 +526,9 @@ def cmd_new(args) -> int:
     # Write metadata
     branch.write_metadata(instance_id)
 
-    # Modify devcontainer
-    modify_devcontainer(branch.path, branch)
+    # Generate override config (keeps repo's devcontainer.json untouched)
+    override_path = generate_override_config(branch)
+    log(f"Generated override config at {override_path}")
 
     # Start container
     log("Starting devcontainer...")
@@ -508,7 +536,11 @@ def cmd_new(args) -> int:
         error("devcontainer CLI not found. Install: npm install -g @devcontainers/cli")
         return 1
 
-    result = run(["devcontainer", "up", "--workspace-folder", str(branch.path)], capture_output=False)
+    result = run([
+        "devcontainer", "up",
+        "--workspace-folder", str(branch.path),
+        "--override-config", str(override_path)
+    ], capture_output=False)
     if result.returncode != 0:
         error("Failed to start devcontainer")
         return 1
@@ -560,7 +592,17 @@ def cmd_start(args) -> int:
         error("devcontainer CLI not found")
         return 1
 
-    result = run(["devcontainer", "up", "--workspace-folder", str(branch.path)], capture_output=False)
+    # Ensure override config exists
+    override_path = get_override_config_path(branch)
+    if not override_path.exists():
+        override_path = generate_override_config(branch)
+        log(f"Generated override config at {override_path}")
+
+    result = run([
+        "devcontainer", "up",
+        "--workspace-folder", str(branch.path),
+        "--override-config", str(override_path)
+    ], capture_output=False)
     if result.returncode != 0:
         error("Failed to start devcontainer")
         return 1
@@ -654,7 +696,12 @@ def cmd_rm(args) -> int:
         if cid:
             run(["docker", "rm", "-f", cid])
 
-    # 4. Remove directory
+    # 4. Remove override config
+    override_dir = CONFIG_DIR / "overrides" / name
+    if override_dir.exists():
+        shutil.rmtree(override_dir)
+
+    # 5. Remove directory
     log("Removing files...")
     shutil.rmtree(branch.path)
 
