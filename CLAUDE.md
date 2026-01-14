@@ -81,6 +81,63 @@ Keys: Ctrl-b n/p (windows), Ctrl-b o (panes), Ctrl-b z (zoom)
 Mouse scroll enabled.
 ```
 
+## How Port Mapping Works
+
+### The Problem
+- Dark's devcontainer always uses fixed ports internally (11001 for BwdServer, 10011-10030 for tests)
+- Running multiple containers with same ports would conflict
+- We want each branch accessible from the host without VS Code running
+
+### The Solution: Docker Port Mapping
+```
+Container (always same)     Host (branch-specific)
+─────────────────────────   ──────────────────────
+11001 (BwdServer)      →    11101 (main), 11201 (test), 11301 (branch3)
+11002 (K8s health)     →    11102, 11202, 11302
+10011-10030 (tests)    →    10111-10130, 10211-10230, 10311-10330
+```
+
+### Implementation
+1. **Override config generation** (`generate_override_config()` in multi.py):
+   - Reads original `devcontainer.json` from the repo
+   - Merges in branch-specific `-p` port mappings in `runArgs`
+   - Writes to `~/.config/dark-multi/overrides/<branch>/devcontainer.json`
+
+2. **Container start** uses `--override-config`:
+   ```bash
+   devcontainer up --workspace-folder ~/code/dark/main \
+                   --override-config ~/.config/dark-multi/overrides/main/devcontainer.json
+   ```
+
+3. **Port formula**:
+   - `bwd_port_base = 11001 + (instance_id * 100)` → 11101, 11201, 11301...
+   - `test_port_base = 10011 + (instance_id * 100)` → 10111, 10211, 10311...
+
+### Accessing BwdServer
+The BwdServer routes based on `Host` header, not port. So:
+
+```bash
+# Works - proper Host header
+curl -H "Host: dark-packages.dlio.localhost" http://localhost:11101/ping
+# Returns: pong (main) or pang (test, if modified)
+
+# Doesn't work - no Host header
+curl http://localhost:11101/ping
+# Returns: canvas not found
+```
+
+For browser access, add to `/etc/hosts`:
+```
+127.0.0.1 dark-packages.dlio.localhost
+```
+Then visit: `http://dark-packages.dlio.localhost:11101/ping`
+
+### Verified Working
+```
+main (ID=1): localhost:11101 → pong
+test (ID=2): localhost:11201 → pang (after code change)
+```
+
 ## Recent Changes
 
 1. Switched from modifying repo's devcontainer.json to override config approach
