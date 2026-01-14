@@ -3,7 +3,7 @@
 from datetime import datetime
 from pathlib import Path
 
-from .config import DARK_ROOT, Colors, run
+from .config import DARK_ROOT, OVERRIDES_DIR, Colors, run
 
 
 class Branch:
@@ -12,7 +12,8 @@ class Branch:
     def __init__(self, name: str):
         self.name = name
         self.path = DARK_ROOT / name
-        self.metadata_file = self.path / ".multi-instance"
+        self.override_dir = OVERRIDES_DIR / name
+        self.metadata_file = self.override_dir / "metadata"
 
     @property
     def exists(self) -> bool:
@@ -20,7 +21,7 @@ class Branch:
 
     @property
     def is_managed(self) -> bool:
-        return self.metadata_file.is_file()
+        return self.override_dir.is_dir() and self.metadata_file.is_file()
 
     @property
     def metadata(self) -> dict:
@@ -72,6 +73,7 @@ class Branch:
         return 11001 + self.instance_id * 100
 
     def write_metadata(self, instance_id: int) -> None:
+        self.override_dir.mkdir(parents=True, exist_ok=True)
         self.metadata_file.write_text(
             f"ID={instance_id}\n"
             f"NAME={self.name}\n"
@@ -91,10 +93,10 @@ class Branch:
 def find_next_instance_id() -> int:
     """Find the next available instance ID."""
     max_id = 0
-    if DARK_ROOT.is_dir():
-        for path in DARK_ROOT.iterdir():
+    if OVERRIDES_DIR.is_dir():
+        for path in OVERRIDES_DIR.iterdir():
             if path.is_dir():
-                meta = path / ".multi-instance"
+                meta = path / "metadata"
                 if meta.is_file():
                     for line in meta.read_text().split("\n"):
                         if line.startswith("ID="):
@@ -118,22 +120,20 @@ def find_source_repo() -> Path | None:
     if main.is_dir() and (main / ".git").exists():
         return main
 
-    # Check any existing managed branch
-    if DARK_ROOT.is_dir():
-        for path in DARK_ROOT.iterdir():
-            if path.is_dir() and (path / ".git").exists() and (path / ".multi-instance").is_file():
-                return path
+    # Check any existing managed branch (via overrides dir)
+    for branch in get_managed_branches():
+        if branch.exists:
+            return branch.path
 
     return None
 
 
 def get_managed_branches() -> list[Branch]:
-    """Get all managed branches."""
+    """Get all managed branches by scanning overrides directory."""
     branches = []
-    if DARK_ROOT.is_dir():
-        for path in sorted(DARK_ROOT.iterdir()):
-            if path.is_dir():
+    if OVERRIDES_DIR.is_dir():
+        for path in sorted(OVERRIDES_DIR.iterdir()):
+            if path.is_dir() and (path / "metadata").is_file():
                 b = Branch(path.name)
-                if b.is_managed:
-                    branches.append(b)
+                branches.append(b)
     return branches

@@ -9,6 +9,7 @@ from pathlib import Path
 DARK_ROOT = Path(os.environ.get("DARK_ROOT", Path.home() / "code" / "dark"))
 DARK_SOURCE = Path(os.environ.get("DARK_SOURCE", DARK_ROOT))
 CONFIG_DIR = Path(os.environ.get("DARK_MULTI_CONFIG", Path.home() / ".config" / "dark-multi"))
+OVERRIDES_DIR = CONFIG_DIR / "overrides"
 TMUX_SESSION = "dark"
 PROXY_PORT = int(os.environ.get("DARK_MULTI_PROXY_PORT", 9000))
 PROXY_PID_FILE = CONFIG_DIR / "proxy.pid"
