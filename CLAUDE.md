@@ -62,14 +62,28 @@ Then: `http://dark-packages.dlio.localhost:11101/ping`
 
 ## TODO / Future Work
 
-1. **Refactor multi.py**: Split into modules (cli.py, tmux.py, proxy.py, dns.py, etc.) - it's getting large
+1. **Port 80 redirect**: Currently requires `:9000` in URL. Add iptables/pf redirect setup.
 2. **More canvas types**: Currently assumes `dark-packages` canvas; support listing/selecting canvases per branch
 
-## Key Files
+## Code Structure
 
-- `multi.py` - Main CLI tool
-- `README.md` - User documentation
-- `~/.config/dark-multi/overrides/` - Generated override configs
+```
+multi.py                    # Entry point (thin wrapper)
+darkmulti/
+├── __init__.py             # Package init
+├── cli.py                  # Argparse + main()
+├── config.py               # Constants, colors, logging
+├── branch.py               # Branch class + discovery
+├── tmux.py                 # Tmux session management
+├── proxy.py                # URL proxy server
+├── dns.py                  # Wildcard DNS setup
+├── devcontainer.py         # Override config generation
+└── commands.py             # All cmd_* implementations
+```
+
+**Runtime files:**
+- `~/.config/dark-multi/overrides/` - Generated devcontainer configs
+- `~/.config/dark-multi/proxy.pid` - Proxy process ID
 
 ## tmux Layout
 
@@ -100,7 +114,7 @@ Container (always same)     Host (branch-specific)
 ```
 
 ### Implementation
-1. **Override config generation** (`generate_override_config()` in multi.py):
+1. **Override config generation** (`darkmulti/devcontainer.py`):
    - Reads original `devcontainer.json` from the repo
    - Merges in branch-specific `-p` port mappings in `runArgs`
    - Writes to `~/.config/dark-multi/overrides/<branch>/devcontainer.json`
@@ -174,3 +188,4 @@ Any new branch automatically works - no /etc/hosts editing needed.
 5. Added Python proxy for nice URLs (auto-starts with containers)
 6. Added `multi urls` to list available endpoints
 7. Added `multi setup-dns` for wildcard DNS (dnsmasq) - works on Linux and macOS
+8. Refactored into `darkmulti/` package with focused modules
