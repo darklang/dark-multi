@@ -129,12 +129,12 @@ func (m BranchDetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			home := NewHomeModel()
 			return home, home.Init()
 
-		case "up", "k":
+		case "up":
 			if m.urlCursor > 0 {
 				m.urlCursor--
 			}
 
-		case "down", "j":
+		case "down":
 			if m.urlCursor < len(m.urls)-1 {
 				m.urlCursor++
 			}
@@ -175,15 +175,15 @@ func (m BranchDetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		case "S":
-			// Stop branch
+		case "k":
+			// Kill branch
 			if m.branch.IsRunning() {
-				m.message = "Stopping..."
+				m.message = "Killing..."
 				return m, func() tea.Msg {
 					if err := stopBranchFull(m.branch); err != nil {
 						return operationErrMsg{err}
 					}
-					return operationDoneMsg{"Stopped"}
+					return operationDoneMsg{"Killed"}
 				}
 			}
 		}
@@ -257,7 +257,7 @@ func (m BranchDetailModel) View() string {
 	b.WriteString("\n")
 	b.WriteString("  " + strings.Repeat("─", 50) + "\n")
 
-	actions := "  [s]tart  [S]top  [c]ode  [t]mux  [o]pen url"
+	actions := "  [s]tart  [k]ill  [c]ode  [t]mux  [o]pen url"
 	b.WriteString(helpStyle.Render(actions))
 	b.WriteString("\n\n")
 

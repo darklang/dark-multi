@@ -2,47 +2,43 @@
 
 ## What This Is
 
-A CLI/TUI tool for managing multiple parallel Dark devcontainer instances with tmux integration. Being rewritten from Python to Go.
+A CLI/TUI tool for managing multiple parallel Dark devcontainer instances with tmux integration.
 
 ## Current State
 
-**Python version (working):** `multi.py` + `dark_multi/` package
-- All CLI commands functional
-- Proxy working
-- DNS setup working
+**Go version (active):** Full rewrite complete, installed at `~/.local/bin/multi`
+- Interactive TUI when run with no args
+- All CLI commands: ls, new, start, stop, rm, code, urls, proxy, setup-dns
+- Claude status detection (⏳ waiting, 🔄 working)
+- Branch metadata stored in `~/.config/dark-multi/overrides/<branch>/metadata`
 
-**Go rewrite (in progress):** See `todos/` for detailed plan
+**Python version:** Still exists at `multi.py` + `dark_multi/` but not used
 
-## Active Development Plan
+## TUI Shortcuts
 
 ```
-todos/
-├── 00-overview.md        # Architecture, tech stack, file map
-├── 01-setup-cli.md       # Phase 1: Go setup + port CLI commands
-├── 02-tui-home.md        # Phase 2: Interactive home screen
-├── 03-tui-branch.md      # Phase 3: Branch detail view
-├── 04-claude-integration.md  # Phase 4: Claude status detection
-└── 05-polish.md          # Phase 5: Error handling, help, polish
+Home screen:
+  ↑/↓         Navigate branches
+  s           Start selected branch
+  k           Kill (stop) selected branch
+  m           Open Matter (dark-packages canvas in browser)
+  c           Open VS Code
+  p           Toggle proxy
+  t           Attach to tmux
+  enter       View branch details
+  ?           Help
+  q           Quit
+
+Branch detail:
+  ↑/↓         Navigate URLs
+  o/enter     Open URL in browser
+  s/k         Start/Kill branch
+  c           VS Code
+  t           tmux
+  esc         Back
 ```
 
-**Start with:** `todos/01-setup-cli.md`
-
-## Target Behavior
-
-```bash
-multi                    # Interactive TUI mode (NEW)
-multi ls                 # CLI: list branches
-multi new <branch>       # CLI: create branch
-multi start <branch>     # CLI: start branch
-multi stop <branch>      # CLI: stop branch
-multi rm <branch>        # CLI: remove branch
-multi code <branch>      # CLI: open VS Code
-multi urls               # CLI: list URLs
-multi proxy start|stop   # CLI: manage proxy
-multi setup-dns          # CLI: configure DNS
-```
-
-## Go Architecture (Target)
+## Architecture
 
 ```
 cmd/multi/main.go           # Entry point
@@ -56,63 +52,50 @@ internal/
 │   └── docker.go           # Docker operations
 ├── tmux/tmux.go            # Tmux session management
 ├── proxy/
-│   ├── proxy.go            # HTTP proxy server
+│   ├── proxy.go            # HTTP proxy server (IPv4+IPv6)
 │   └── handler.go          # Request routing
 ├── dns/dns.go              # DNS setup (Linux/macOS)
-├── claude/status.go        # Claude status detection
-├── tui/
-│   ├── app.go              # Main bubbletea app
-│   ├── home.go             # Home screen model
-│   ├── branch.go           # Branch detail model
-│   ├── styles.go           # Lipgloss styles
-│   └── keys.go             # Key bindings
-└── cli/commands.go         # Cobra commands
+├── claude/status.go        # Claude status from conversation files
+└── tui/
+    ├── app.go              # Bubbletea app entry
+    ├── home.go             # Home screen
+    ├── branch_detail.go    # Branch detail view
+    ├── help.go             # Help screen
+    ├── operations.go       # Start/stop/code operations
+    └── styles.go           # Lipgloss styles
 ```
 
-## Tech Stack
-
-- **Go 1.21+**
-- **Charm libraries:** bubbletea, lipgloss, bubbles, log
-- **cobra** for CLI
-
-## Key Concepts (Preserved from Python)
+## Key Concepts
 
 ### Port Mapping
-Container always uses standard ports internally. Host ports calculated by branch ID:
+Container uses standard ports internally. Host ports by instance ID:
 - `bwd_port = 11001 + (instance_id * 100)` → 11101, 11201, ...
 - `test_port = 10011 + (instance_id * 100)` → 10111, 10211, ...
 
 ### Override Configs
-Don't modify repo's devcontainer.json. Generate merged configs at:
-`~/.config/dark-multi/overrides/<branch>/devcontainer.json`
+Generated at `~/.config/dark-multi/overrides/<branch>/devcontainer.json`
+- Unique container names, ports, volumes per branch
+- Branch metadata in `metadata` file (ID, name, created)
 
 ### URL Proxy
-Routes `<canvas>.<branch>.dlio.localhost:9000` → appropriate port with correct Host header.
+Routes `<canvas>.<branch>.dlio.localhost:9000` → container's BwdServer port
+- Proxy listens on both IPv4 and IPv6
+- Start with: `multi proxy start`
 
-### DNS Setup
-dnsmasq configured for wildcard `*.dlio.localhost → 127.0.0.1`
+### DNS
+`.localhost` TLD is handled by systemd-resolved (RFC 6761)
+- Resolves to both 127.0.0.1 and ::1 automatically
+- No dnsmasq needed on modern Linux
 
-## Python Code Reference
-
-When porting, reference these Python files:
-- `dark_multi/config.py` - Constants, logging
-- `dark_multi/branch.py` - Branch class
-- `dark_multi/tmux.py` - Tmux operations
-- `dark_multi/proxy.py` - Proxy server
-- `dark_multi/dns.py` - DNS setup
-- `dark_multi/devcontainer.py` - Override configs
-- `dark_multi/commands.py` - Command implementations
-
-## Testing Commands
+## Building
 
 ```bash
-# Python (current)
-python3 multi.py ls
-python3 multi.py urls
-curl http://dark-packages.main.dlio.localhost:9000/ping
-
-# Go (after port)
-./multi ls
-./multi urls
-./multi  # should launch TUI
+# Requires Go 1.21+ (installed at ~/go-sdk/go)
+~/go-sdk/go/bin/go build -o multi ./cmd/multi
+cp multi ~/.local/bin/multi
 ```
+
+## Known Issues
+
+- Proxy can crash silently when backgrounded; use `multi proxy fg` to debug
+- "canvas not found" means Dark canvases aren't loaded in container (not a multi issue)

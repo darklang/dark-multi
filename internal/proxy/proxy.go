@@ -3,6 +3,7 @@ package proxy
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -63,12 +64,19 @@ func Start(port int, background bool) (int, error) {
 	// Foreground mode - run the server
 	RefreshBranchPorts()
 
+	// Listen on both IPv4 and IPv6
 	server := &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
 		Handler: &ProxyHandler{},
 	}
 
-	return 0, server.ListenAndServe()
+	// Use a listener that supports dual-stack
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		return 0, err
+	}
+
+	return 0, server.Serve(ln)
 }
 
 // Stop stops the proxy server.

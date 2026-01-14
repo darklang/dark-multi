@@ -92,17 +92,17 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 
-		case "up", "k":
+		case "up":
 			if m.cursor > 0 {
 				m.cursor--
 			}
 
-		case "down", "j":
+		case "down":
 			if m.cursor < len(m.branches)-1 {
 				m.cursor++
 			}
 
-		case "enter", "l":
+		case "enter":
 			// Go to branch detail view
 			if len(m.branches) > 0 {
 				b := m.branches[m.cursor]
@@ -131,17 +131,26 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		case "S":
-			// Stop selected branch
+		case "k":
+			// Kill selected branch
 			if len(m.branches) > 0 {
 				b := m.branches[m.cursor]
 				if !b.IsRunning() {
 					m.message = fmt.Sprintf("%s is already stopped", b.Name)
 				} else {
 					m.loading = true
-					m.message = fmt.Sprintf("Stopping %s...", b.Name)
+					m.message = fmt.Sprintf("Killing %s...", b.Name)
 					return m, m.stopBranch(b)
 				}
+			}
+
+		case "m":
+			// Open Matter (dark-packages canvas)
+			if len(m.branches) > 0 {
+				b := m.branches[m.cursor]
+				url := fmt.Sprintf("dark-packages.%s.dlio.localhost:%d/ping", b.Name, config.ProxyPort)
+				openInBrowser(url)
+				m.message = "Opened Matter"
 			}
 
 		case "c":
@@ -263,9 +272,8 @@ func (m HomeModel) View() string {
 				}
 			}
 
-			line := fmt.Sprintf("%s%s %-12s  %-8s  ports %d+/%d+%s%s",
-				cursor, indicator, style.Render(br.Name), status,
-				br.PortBase(), br.BwdPortBase(), gitStatus, claudeInfo)
+			line := fmt.Sprintf("%s%s %-12s  %s%s%s",
+				cursor, indicator, style.Render(br.Name), status, gitStatus, claudeInfo)
 			b.WriteString(line)
 			b.WriteString("\n")
 		}
@@ -301,7 +309,7 @@ func (m HomeModel) View() string {
 	}
 
 	// Help
-	b.WriteString(helpStyle.Render("[s]tart  [S]top  [c]ode  [p]roxy  [t]mux  [enter] details  [?] help  [q]uit"))
+	b.WriteString(helpStyle.Render("[s]tart  [k]ill  [m]atter  [c]ode  [p]roxy  [t]mux  [enter] details  [?] help  [q]uit"))
 	b.WriteString("\n")
 
 	return b.String()
