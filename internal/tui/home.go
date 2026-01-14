@@ -3,11 +3,13 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/stachu/dark-multi/internal/branch"
+	"github.com/stachu/dark-multi/internal/claude"
 	"github.com/stachu/dark-multi/internal/config"
 	"github.com/stachu/dark-multi/internal/proxy"
 	"github.com/stachu/dark-multi/internal/tmux"
@@ -15,20 +17,23 @@ import (
 
 // HomeModel is the main TUI model.
 type HomeModel struct {
-	branches     []*branch.Branch
-	cursor       int
-	proxyRunning bool
-	width        int
-	height       int
-	message      string
-	err          error
-	quitting     bool
-	loading      bool
+	branches      []*branch.Branch
+	claudeStatus  map[string]*claude.Status
+	cursor        int
+	proxyRunning  bool
+	width         int
+	height        int
+	message       string
+	err           error
+	quitting      bool
+	loading       bool
 }
 
 // Messages
 type branchesLoadedMsg []*branch.Branch
 type proxyStatusMsg bool
+type claudeStatusMsg map[string]*claude.Status
+type tickMsg time.Time
 type operationDoneMsg struct{ message string }
 type operationErrMsg struct{ err error }
 type attachTmuxMsg struct{}
@@ -45,6 +50,7 @@ func (m HomeModel) Init() tea.Cmd {
 	return tea.Batch(
 		loadBranches,
 		checkProxyStatus,
+		tickCmd(),
 	)
 }
 
@@ -55,6 +61,22 @@ func loadBranches() tea.Msg {
 func checkProxyStatus() tea.Msg {
 	_, running := proxy.IsRunning()
 	return proxyStatusMsg(running)
+}
+
+func loadClaudeStatus(branches []*branch.Branch) tea.Cmd {
+	return func() tea.Msg {
+		statuses := make(map[string]*claude.Status)
+		for _, b := range branches {
+			statuses[b.Name] = claude.GetStatus(b.Path)
+		}
+		return claudeStatusMsg(statuses)
+	}
+}
+
+func tickCmd() tea.Cmd {
+	return tea.Tick(5*time.Second, func(t time.Time) tea.Msg {
+		return tickMsg(t)
+	})
 }
 
 // Update handles messages.
@@ -80,7 +102,15 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor++
 			}
 
-		case "enter":
+		case "enter", "l":
+			// Go to branch detail view
+			if len(m.branches) > 0 {
+				b := m.branches[m.cursor]
+				detail := NewBranchDetailModel(b)
+				return detail, detail.Init()
+			}
+
+		case "t":
 			// Attach to tmux session
 			if tmux.SessionExists() {
 				m.quitting = true
@@ -135,6 +165,10 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Refresh
 			m.loading = true
 			return m, loadBranches
+
+		case "?":
+			// Show help
+			return NewHelpModel(), nil
 		}
 
 	case branchesLoadedMsg:
@@ -143,11 +177,20 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.cursor >= len(m.branches) {
 			m.cursor = max(0, len(m.branches)-1)
 		}
-		return m, nil
+		// Also load Claude status after branches load
+		return m, loadClaudeStatus(m.branches)
 
 	case proxyStatusMsg:
 		m.proxyRunning = bool(msg)
 		return m, nil
+
+	case claudeStatusMsg:
+		m.claudeStatus = msg
+		return m, nil
+
+	case tickMsg:
+		// Periodic refresh of Claude status
+		return m, tea.Batch(loadClaudeStatus(m.branches), tickCmd())
 
 	case operationDoneMsg:
 		m.message = msg.message
@@ -206,14 +249,23 @@ func (m HomeModel) View() string {
 			// Git status
 			gitStatus := ""
 			if br.HasChanges() {
-				gitStatus = modifiedStyle.Render(" [modified]")
+				gitStatus = modifiedStyle.Render(" [mod]")
 			}
 
-			// Port info
-			ports := fmt.Sprintf("ports %d+/%d+", br.PortBase(), br.BwdPortBase())
+			// Claude status
+			claudeInfo := ""
+			if cs, ok := m.claudeStatus[br.Name]; ok && cs != nil {
+				switch cs.State {
+				case "waiting":
+					claudeInfo = modifiedStyle.Render(" ⏳")
+				case "working":
+					claudeInfo = runningStyle.Render(" 🔄")
+				}
+			}
 
-			line := fmt.Sprintf("%s%s %-12s  %-8s  %s%s",
-				cursor, indicator, style.Render(br.Name), status, ports, gitStatus)
+			line := fmt.Sprintf("%s%s %-12s  %-8s  ports %d+/%d+%s%s",
+				cursor, indicator, style.Render(br.Name), status,
+				br.PortBase(), br.BwdPortBase(), gitStatus, claudeInfo)
 			b.WriteString(line)
 			b.WriteString("\n")
 		}
@@ -249,7 +301,7 @@ func (m HomeModel) View() string {
 	}
 
 	// Help
-	b.WriteString(helpStyle.Render("[s]tart  [S]top  [c]ode  [p]roxy  [r]efresh  [enter] tmux  [q]uit"))
+	b.WriteString(helpStyle.Render("[s]tart  [S]top  [c]ode  [p]roxy  [t]mux  [enter] details  [?] help  [q]uit"))
 	b.WriteString("\n")
 
 	return b.String()
