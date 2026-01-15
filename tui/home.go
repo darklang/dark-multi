@@ -400,7 +400,7 @@ func (m HomeModel) View() string {
 			if cs, ok := m.claudeStatus[br.Name]; ok && cs != nil {
 				switch cs.State {
 				case "waiting":
-					claudeIndicator = " ⏳"
+					claudeIndicator = " 💬" // Waiting for user input
 				case "working":
 					claudeIndicator = runningStyle.Render(" ⚡")
 					// Show what Claude is doing
