@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"os/exec"
 
-	"github.com/stachu/dark-multi/internal/branch"
-	"github.com/stachu/dark-multi/internal/container"
-	"github.com/stachu/dark-multi/internal/tmux"
+	"github.com/darklang/dark-multi/internal/branch"
+	"github.com/darklang/dark-multi/internal/container"
+	"github.com/darklang/dark-multi/internal/tmux"
 )
 
 // startBranchFull starts a branch container and sets up tmux.

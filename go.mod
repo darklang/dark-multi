@@ -1,4 +1,4 @@
-module github.com/stachu/dark-multi
+module github.com/darklang/dark-multi
 
 go 1.25
 

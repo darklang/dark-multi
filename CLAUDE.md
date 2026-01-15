@@ -5,53 +5,73 @@
 When user says "go", ask: **"Are you Stachu or Ocean?"**
 
 ### If Stachu
-Continue developing. Check `todos/` for planned work, or ask what to work on next.
+Continue developing. Ask what to work on next.
 
 ### If Ocean
 Guide through setup and testing. Work through this checklist together:
 
-**Phase 1: Setup**
-- [ ] Install Go 1.21+ (`brew install go` or download from go.dev)
-- [ ] Verify: `go version` shows 1.21+
-- [ ] Clone this repo somewhere (e.g., `~/code/dark-multi`)
+**Phase 1: Prerequisites**
+- [ ] Xcode command line tools: `xcode-select --install`
+- [ ] Homebrew: https://brew.sh
+- [ ] Docker Desktop for Mac (running)
+- [ ] VS Code with Dev Containers extension
+- [ ] tmux: `brew install tmux`
+
+**Phase 2: Install Go & Build**
+- [ ] Install Go: `brew install go`
+- [ ] Verify: `go version` (should be 1.21+)
+- [ ] Clone: `git clone git@github.com:darklang/dark-multi.git ~/code/dark-multi`
 - [ ] Build: `cd ~/code/dark-multi && go build -o multi ./cmd/multi`
-- [ ] Install: `cp multi ~/.local/bin/` (or add to PATH)
-- [ ] Verify: `multi --help` works
+- [ ] Install: `mkdir -p ~/.local/bin && cp multi ~/.local/bin/`
+- [ ] Add to PATH in ~/.zshrc: `export PATH="$HOME/.local/bin:$PATH"`
+- [ ] Reload: `source ~/.zshrc`
+- [ ] Verify: `multi --help`
 
-**Phase 2: Prepare Dark Directory**
-- [ ] Backup existing ~/code/dark if needed: `mv ~/code/dark ~/code/dark-backup`
-- [ ] Clone fresh dark repo: `git clone <dark-repo-url> ~/code/dark`
-- [ ] Clear any old override configs: `rm -rf ~/.config/dark-multi`
+**Phase 3: Prepare Dark Directory**
+- [ ] Backup existing: `mv ~/code/dark ~/code/dark-backup` (if exists)
+- [ ] Clone dark repo: `git clone git@github.com:darklang/dark.git ~/code/dark`
+- [ ] Clear old configs: `rm -rf ~/.config/dark-multi`
 
-**Phase 3: Test CLI Commands**
-- [ ] `multi ls` - should show empty or just "main"
-- [ ] `multi new test1` - creates a new branch
-- [ ] `multi ls` - should show test1 (stopped)
-- [ ] `multi start test1` - starts the devcontainer (takes a while first time)
-- [ ] `multi ls` - should show test1 as running
-- [ ] `multi code test1` - opens VS Code attached to container
-- [ ] `multi stop test1` - stops the container
+**Phase 4: Environment Variables (optional)**
+Add to ~/.zshrc if defaults don't work:
+```bash
+export DARK_ROOT="$HOME/code/dark"           # where branches live
+export DARK_SOURCE="$HOME/code/dark"         # repo to clone from
+export DARK_MULTI_TERMINAL="iterm2"          # or "terminal" for Terminal.app
+export DARK_MULTI_PROXY_PORT="9000"
+```
 
-**Phase 4: Test TUI**
-- [ ] `multi` (no args) - launches interactive TUI
-- [ ] Navigate with arrow keys
-- [ ] Press `s` to start a branch
-- [ ] Press `t` to open terminal (should open iTerm2 or Terminal.app)
-- [ ] Press `c` to open VS Code
-- [ ] Press `?` for help
-- [ ] Press `q` to quit
+**Phase 5: Test with TWO Branches**
+Goal: Run 2 branches simultaneously to verify parallel instances work.
 
-**Phase 5: Test Proxy (if needed)**
-- [ ] `multi proxy start` - starts the URL proxy on :9000
-- [ ] `multi urls` - lists accessible URLs
-- [ ] Try opening a URL in browser
-- [ ] `multi proxy stop`
+- [ ] `multi ls` - should show "main" (or empty)
+- [ ] `multi new branch1` - creates first branch
+- [ ] `multi new branch2` - creates second branch
+- [ ] `multi start branch1` - start first (takes a while first time)
+- [ ] `multi start branch2` - start second
+- [ ] `multi ls` - both should show as running (●)
+
+**Phase 6: Test TUI**
+- [ ] `multi` - launches TUI
+- [ ] Arrow keys to navigate between branches
+- [ ] `t` on branch1 - opens terminal (iTerm2/Terminal.app with tmux)
+- [ ] `t` on branch2 - opens SEPARATE terminal window
+- [ ] `c` - opens VS Code for selected branch
+- [ ] `?` - shows help
+- [ ] `q` - quit
+
+**Phase 7: Cleanup**
+- [ ] `multi stop branch1`
+- [ ] `multi stop branch2`
+- [ ] `multi rm branch1` (optional - removes files)
+- [ ] `multi rm branch2` (optional)
 
 **Report Issues**
-Note anything that doesn't work - especially:
-- Terminal spawning (iTerm2 vs Terminal.app)
+Note anything that doesn't work:
+- Terminal spawning (iTerm2 vs Terminal.app detection)
 - DNS resolution for .localhost URLs
-- Any error messages
+- Error messages
+- Anything confusing
 
 ---
 

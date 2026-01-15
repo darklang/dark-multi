@@ -1,60 +1,48 @@
 # Dark Multi
 
-Manage multiple Dark devcontainer instances.
+**WIP** - Tool for managing multiple Dark devcontainer instances in parallel.
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ DARK MULTI                                              │
+│                                                         │
+│ > ● main           3c +150 -42  ⚡                      │
+│   ● feature-auth   1c +20 -5                            │
+│   ○ bugfix-login                                        │
+│                                                         │
+│ System: 8 cores, 32GB RAM  •  2/4 running  •  Proxy: ●  │
+│                                                         │
+│ [s]tart [k]ill [t]mux [c]ode [m]atter [p]roxy [?] [q]   │
+└─────────────────────────────────────────────────────────┘
+```
 
 ## Install
 
 ```bash
-# Build
-cd ~/code/dark-multi
 go build -o multi ./cmd/multi
 cp multi ~/.local/bin/
-
-# Ensure in PATH
-export PATH="$HOME/.local/bin:$PATH"
 ```
 
 ## Usage
 
 ```bash
-multi                    # TUI
+multi                    # TUI (above)
 multi ls                 # List branches
-multi new <branch>       # Create + start branch
-multi start <branch>     # Start stopped branch
-multi stop <branch>      # Stop branch (keeps files)
-multi rm <branch>        # Remove branch
+multi new <branch>       # Create branch
+multi start/stop <branch>
 multi code <branch>      # Open VS Code
-multi urls               # List URLs
-multi proxy start|stop   # Manage proxy
-multi setup-dns          # One-time DNS setup
+multi proxy start|stop
 ```
 
-## TUI Keys
+## Keys
 
-| Key | Action |
-|-----|--------|
-| `s` | Start branch |
-| `k` | Kill (stop) branch |
-| `t` | Open terminal (CLI + claude panes) |
-| `c` | Open VS Code |
-| `m` | Open Matter canvas |
-| `l` | View logs (detail view) |
-| `p` | Toggle proxy |
-| `?` | Help |
+`s` start | `k` kill | `t` terminal | `c` code | `m` matter | `p` proxy | `?` help | `q` quit
 
 ## Config
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DARK_ROOT` | `~/code/dark` | Where branches live |
-| `DARK_SOURCE` | `~/code/dark` | Repo to clone from |
-| `DARK_MULTI_TERMINAL` | `auto` | Terminal: gnome-terminal, kitty, alacritty, iterm2, etc |
-| `DARK_MULTI_PROXY_PORT` | `9000` | Proxy port |
-
-## Browser Access
-
-```bash
-multi setup-dns          # One-time
-multi proxy start        # Auto-starts with branches
-# Visit: http://dark-packages.<branch>.dlio.localhost:9000/ping
-```
+| Variable | Default |
+|----------|---------|
+| `DARK_ROOT` | `~/code/dark` |
+| `DARK_SOURCE` | `~/code/dark` |
+| `DARK_MULTI_TERMINAL` | `auto` (gnome-terminal, kitty, iterm2, etc) |
+| `DARK_MULTI_PROXY_PORT` | `9000` |

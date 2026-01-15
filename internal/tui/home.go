@@ -7,11 +7,11 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/stachu/dark-multi/internal/branch"
-	"github.com/stachu/dark-multi/internal/claude"
-	"github.com/stachu/dark-multi/internal/config"
-	"github.com/stachu/dark-multi/internal/proxy"
-	"github.com/stachu/dark-multi/internal/tmux"
+	"github.com/darklang/dark-multi/internal/branch"
+	"github.com/darklang/dark-multi/internal/claude"
+	"github.com/darklang/dark-multi/internal/config"
+	"github.com/darklang/dark-multi/internal/proxy"
+	"github.com/darklang/dark-multi/internal/tmux"
 )
 
 // HomeModel is the main TUI model.

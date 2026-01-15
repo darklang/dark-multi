@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/stachu/dark-multi/internal/config"
+	"github.com/darklang/dark-multi/internal/config"
 )
 
 // IsAvailable returns true if tmux is installed.

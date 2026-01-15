@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/stachu/dark-multi/internal/config"
+	"github.com/darklang/dark-multi/internal/config"
 )
 
 // FindNextInstanceID finds the next available instance ID.

@@ -11,8 +11,8 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/stachu/dark-multi/internal/branch"
-	"github.com/stachu/dark-multi/internal/config"
+	"github.com/darklang/dark-multi/internal/branch"
+	"github.com/darklang/dark-multi/internal/config"
 )
 
 // BranchPorts caches branch name -> port mappings.

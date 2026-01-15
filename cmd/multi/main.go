@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/stachu/dark-multi/internal/cli"
-	"github.com/stachu/dark-multi/internal/tui"
+	"github.com/darklang/dark-multi/internal/cli"
+	"github.com/darklang/dark-multi/internal/tui"
 )
 
 func main() {

@@ -10,8 +10,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/stachu/dark-multi/internal/branch"
-	"github.com/stachu/dark-multi/internal/config"
+	"github.com/darklang/dark-multi/internal/branch"
+	"github.com/darklang/dark-multi/internal/config"
 )
 
 // BranchDetailModel shows details for a single branch.

@@ -10,7 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/stachu/dark-multi/internal/branch"
+	"github.com/darklang/dark-multi/internal/branch"
 )
 
 const (

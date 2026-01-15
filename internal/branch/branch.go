@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stachu/dark-multi/internal/config"
+	"github.com/darklang/dark-multi/internal/config"
 )
 
 // Branch represents a branch clone.

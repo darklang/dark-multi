@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/stachu/dark-multi/internal/branch"
-	"github.com/stachu/dark-multi/internal/config"
+	"github.com/darklang/dark-multi/internal/branch"
+	"github.com/darklang/dark-multi/internal/config"
 )
 
 // GetOverrideConfigPath returns the path to the override config for a branch.
