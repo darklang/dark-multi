@@ -1,6 +1,8 @@
 # Dark Multi
 
-**WIP** - Tool for managing multiple Dark devcontainer instances in parallel.
+**WIP** - Run multiple Dark devcontainer instances in parallel.
+
+The intent: spin up several containers, unleash Claude agents in each, and jump between tasks ergonomically. Each branch gets its own isolated environment with dedicated terminal + VS Code.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
