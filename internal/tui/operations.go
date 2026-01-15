@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"os/exec"
-	"path/filepath"
 
 	"github.com/stachu/dark-multi/internal/branch"
 	"github.com/stachu/dark-multi/internal/container"
@@ -72,17 +71,25 @@ func stopBranchFull(b *branch.Branch) error {
 
 // openVSCode opens VS Code for a branch.
 func openVSCode(b *branch.Branch) error {
-	if !b.Exists() {
-		return fmt.Errorf("branch %s does not exist", b.Name)
+	if !b.IsRunning() {
+		return fmt.Errorf("branch %s is not running", b.Name)
 	}
 
-	overrideConfig := filepath.Join(b.OverrideDir, "devcontainer.json")
+	// Use devcontainer CLI (preferred)
+	if _, err := exec.LookPath("devcontainer"); err == nil {
+		cmd := exec.Command("devcontainer", "open", b.Path)
+		if err := cmd.Run(); err == nil {
+			return nil
+		}
+	}
 
-	// Build the devcontainer URI
-	// Format: vscode-remote://dev-container+<hex-encoded-config-path>/home/dark/app
-	hexPath := fmt.Sprintf("%x", overrideConfig)
-	uri := fmt.Sprintf("vscode-remote://dev-container+%s/home/dark/app", hexPath)
+	// Fallback: use code --remote attached-container
+	if _, err := exec.LookPath("code"); err == nil {
+		containerID, _ := b.ContainerID()
+		hexID := fmt.Sprintf("%x", containerID)
+		cmd := exec.Command("code", "--remote", fmt.Sprintf("attached-container+%s", hexID), "/home/dark/app")
+		return cmd.Start()
+	}
 
-	cmd := exec.Command("code", "--folder-uri", uri)
-	return cmd.Start()
+	return fmt.Errorf("neither devcontainer CLI nor VS Code found")
 }
