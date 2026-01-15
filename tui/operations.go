@@ -2,9 +2,12 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 
 	"github.com/darklang/dark-multi/branch"
+	"github.com/darklang/dark-multi/config"
 	"github.com/darklang/dark-multi/container"
 	"github.com/darklang/dark-multi/tmux"
 )
@@ -92,4 +95,70 @@ func openVSCode(b *branch.Branch) error {
 	}
 
 	return fmt.Errorf("neither devcontainer CLI nor VS Code found")
+}
+
+// createBranchFull creates a new branch, cloning from GitHub if needed.
+func createBranchFull(name string) (*branch.Branch, error) {
+	b := branch.New(name)
+
+	// If branch already exists, just return it (will be started separately)
+	if b.Exists() {
+		if !b.IsManaged() {
+			instanceID := branch.FindNextInstanceID()
+			b.WriteMetadata(instanceID)
+		}
+		return b, nil
+	}
+
+	// Find source to clone from
+	source := branch.FindSourceRepo()
+	if source == "" {
+		return nil, fmt.Errorf("no source repo found")
+	}
+
+	instanceID := branch.FindNextInstanceID()
+
+	// Ensure parent dir exists
+	os.MkdirAll(config.DarkRoot, 0755)
+
+	// Clone
+	cloneCmd := exec.Command("git", "clone", source, b.Path)
+	if err := cloneCmd.Run(); err != nil {
+		return nil, fmt.Errorf("clone failed: %w", err)
+	}
+
+	// Checkout branch
+	exec.Command("git", "-C", b.Path, "fetch", "origin").Run()
+	checkoutCmd := exec.Command("git", "-C", b.Path, "checkout", "-b", name, "origin/main")
+	if err := checkoutCmd.Run(); err != nil {
+		exec.Command("git", "-C", b.Path, "checkout", "-b", name, "main").Run()
+	}
+
+	// Write metadata
+	b.WriteMetadata(instanceID)
+
+	return b, nil
+}
+
+// removeBranchFull removes a branch entirely.
+func removeBranchFull(b *branch.Branch) error {
+	// Stop container first
+	stopBranchFull(b)
+
+	// Kill tmux session
+	tmux.KillBranchSession(b.Name)
+
+	// Remove any lingering containers
+	container.RemoveContainersByLabel(fmt.Sprintf("dark-dev-container=%s", b.Name))
+
+	// Remove override config
+	overrideDir := filepath.Join(config.ConfigDir, "overrides", b.Name)
+	os.RemoveAll(overrideDir)
+
+	// Remove directory
+	if err := os.RemoveAll(b.Path); err != nil {
+		return fmt.Errorf("failed to remove files: %w", err)
+	}
+
+	return nil
 }

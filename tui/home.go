@@ -14,6 +14,15 @@ import (
 	"github.com/darklang/dark-multi/tmux"
 )
 
+// InputMode represents the current input mode.
+type InputMode int
+
+const (
+	InputNone InputMode = iota
+	InputNewBranch
+	InputConfirmDelete
+)
+
 // HomeModel is the main TUI model.
 type HomeModel struct {
 	branches      []*branch.Branch
@@ -26,6 +35,8 @@ type HomeModel struct {
 	err           error
 	quitting      bool
 	loading       bool
+	inputMode     InputMode
+	inputText     string
 }
 
 // Messages
@@ -36,6 +47,14 @@ type tickMsg time.Time
 type operationDoneMsg struct{ message string }
 type operationErrMsg struct{ err error }
 type attachTmuxMsg struct{}
+type progressMsg struct{ message string }
+
+// Pending operation for multi-step creates
+type createStepMsg struct {
+	name   string
+	branch *branch.Branch
+	step   int // 1=clone done, 2=start done
+}
 
 // NewHomeModel creates a new home model.
 func NewHomeModel() HomeModel {
@@ -82,6 +101,11 @@ func tickCmd() tea.Cmd {
 func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Handle input modes first
+		if m.inputMode != InputNone {
+			return m.handleInputMode(msg)
+		}
+
 		// Clear any previous message/error on keypress
 		m.message = ""
 		m.err = nil
@@ -191,6 +215,21 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loading = true
 			return m, loadBranches
 
+		case "n":
+			// New branch - enter input mode
+			m.inputMode = InputNewBranch
+			m.inputText = ""
+			m.message = ""
+			return m, nil
+
+		case "d", "x":
+			// Delete branch - enter confirmation mode
+			if len(m.branches) > 0 {
+				m.inputMode = InputConfirmDelete
+				m.message = ""
+				return m, nil
+			}
+
 		case "?":
 			// Show help
 			return NewHelpModel(), nil
@@ -216,6 +255,21 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		// Periodic refresh of Claude status
 		return m, tea.Batch(loadClaudeStatus(m.branches), tickCmd())
+
+	case progressMsg:
+		m.message = msg.message
+		return m, nil
+
+	case createStepMsg:
+		if msg.step == 1 {
+			// Clone done, now start
+			m.message = fmt.Sprintf("Starting container for %s...", msg.name)
+			return m, startBranchStep(msg.branch, msg.name)
+		}
+		// Step 2: all done
+		m.message = fmt.Sprintf("Created and started %s", msg.name)
+		m.loading = false
+		return m, tea.Batch(loadBranches, checkProxyStatus)
 
 	case operationDoneMsg:
 		m.message = msg.message
@@ -252,7 +306,7 @@ func (m HomeModel) View() string {
 
 	// Branches
 	if len(m.branches) == 0 {
-		b.WriteString(stoppedStyle.Render("  No branches yet. Create one with 'multi new <name>'"))
+		b.WriteString(stoppedStyle.Render("  No branches yet. Press 'n' to create one."))
 		b.WriteString("\n")
 	} else {
 		// Find max branch name length for alignment
@@ -326,6 +380,27 @@ func (m HomeModel) View() string {
 	b.WriteString(statusBarStyle.Render(statusLine))
 	b.WriteString("\n\n")
 
+	// Input mode prompts
+	switch m.inputMode {
+	case InputNewBranch:
+		b.WriteString(selectedStyle.Render("New branch name: "))
+		b.WriteString(m.inputText)
+		b.WriteString("█")
+		b.WriteString("\n")
+		b.WriteString(helpStyle.Render("[enter] create  [esc] cancel"))
+		b.WriteString("\n")
+		return b.String()
+
+	case InputConfirmDelete:
+		if len(m.branches) > 0 {
+			branchName := m.branches[m.cursor].Name
+			b.WriteString(errorStyle.Render(fmt.Sprintf("Delete '%s'? ", branchName)))
+			b.WriteString("[y/n]")
+			b.WriteString("\n")
+		}
+		return b.String()
+	}
+
 	// Message or error
 	if m.err != nil {
 		b.WriteString(errorStyle.Render(fmt.Sprintf("Error: %v", m.err)))
@@ -336,7 +411,7 @@ func (m HomeModel) View() string {
 	}
 
 	// Help
-	b.WriteString(helpStyle.Render("[s]tart  [k]ill  [m]atter  [c]ode  [p]roxy  [t]mux  [enter] details  [?] help  [q]uit"))
+	b.WriteString(helpStyle.Render("[n]ew  [d]elete  [s]tart  [k]ill  [t]mux  [c]ode  [p]roxy  [?] help  [q]uit"))
 	b.WriteString("\n")
 
 	return b.String()
@@ -389,5 +464,104 @@ func (m HomeModel) stopProxy() tea.Cmd {
 			return operationErrMsg{fmt.Errorf("failed to stop proxy")}
 		}
 		return operationDoneMsg{"Proxy stopped"}
+	}
+}
+
+// handleInputMode handles keypresses during input modes.
+func (m HomeModel) handleInputMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch m.inputMode {
+	case InputNewBranch:
+		switch msg.String() {
+		case "enter":
+			if m.inputText == "" {
+				m.inputMode = InputNone
+				return m, nil
+			}
+			name := m.inputText
+			m.inputMode = InputNone
+			m.inputText = ""
+			m.loading = true
+			m.message = fmt.Sprintf("Cloning %s from GitHub...", name)
+			return m, m.createAndStartBranch(name)
+
+		case "esc":
+			m.inputMode = InputNone
+			m.inputText = ""
+			return m, nil
+
+		case "backspace":
+			if len(m.inputText) > 0 {
+				m.inputText = m.inputText[:len(m.inputText)-1]
+			}
+			return m, nil
+
+		default:
+			// Only accept valid branch name characters
+			key := msg.String()
+			if len(key) == 1 && isValidBranchChar(key[0]) {
+				m.inputText += key
+			}
+			return m, nil
+		}
+
+	case InputConfirmDelete:
+		switch msg.String() {
+		case "y", "Y":
+			if len(m.branches) > 0 {
+				b := m.branches[m.cursor]
+				m.inputMode = InputNone
+				m.loading = true
+				m.message = fmt.Sprintf("Removing %s...", b.Name)
+				return m, m.removeBranch(b)
+			}
+			m.inputMode = InputNone
+			return m, nil
+
+		case "n", "N", "esc":
+			m.inputMode = InputNone
+			m.message = "Cancelled"
+			return m, nil
+
+		default:
+			return m, nil
+		}
+	}
+
+	return m, nil
+}
+
+func isValidBranchChar(c byte) bool {
+	return (c >= 'a' && c <= 'z') ||
+		(c >= 'A' && c <= 'Z') ||
+		(c >= '0' && c <= '9') ||
+		c == '-' || c == '_'
+}
+
+func (m HomeModel) createAndStartBranch(name string) tea.Cmd {
+	return func() tea.Msg {
+		b, err := createBranchFull(name)
+		if err != nil {
+			return operationErrMsg{err}
+		}
+		// Return step 1 done - UI will show progress and trigger step 2
+		return createStepMsg{name: name, branch: b, step: 1}
+	}
+}
+
+func startBranchStep(b *branch.Branch, name string) tea.Cmd {
+	return func() tea.Msg {
+		if err := startBranchFull(b); err != nil {
+			return operationErrMsg{err}
+		}
+		return createStepMsg{name: name, branch: b, step: 2}
+	}
+}
+
+func (m HomeModel) removeBranch(b *branch.Branch) tea.Cmd {
+	return func() tea.Msg {
+		if err := removeBranchFull(b); err != nil {
+			return operationErrMsg{err}
+		}
+		return operationDoneMsg{fmt.Sprintf("Removed %s", b.Name)}
 	}
 }

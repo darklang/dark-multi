@@ -58,6 +58,8 @@ func (m HelpModel) View() string {
 
 	b.WriteString(sectionStyle.Render("Branch Actions"))
 	b.WriteString("\n")
+	b.WriteString("  n           New branch (prompts for name)\n")
+	b.WriteString("  d           Delete branch (with confirmation)\n")
 	b.WriteString("  s           Start branch\n")
 	b.WriteString("  k           Kill (stop) branch\n")
 	b.WriteString("  t           Open terminal (CLI + claude panes)\n")

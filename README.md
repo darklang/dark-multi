@@ -14,7 +14,7 @@ The intent: spin up several containers, unleash Claude agents in each, and jump 
 │                                                             │
 │ System: 8 cores, 32GB RAM  •  2/4 running  •  Proxy: ●      │
 │                                                             │
-│ [s]tart [k]ill [t]mux [c]ode [m]atter [p]roxy [?] [q]       │
+│ [n]ew [d]elete [s]tart [k]ill [t]mux [c]ode [p]roxy [?] [q] │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -36,29 +36,33 @@ cp multi ~/.local/bin/
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-## Quick Start
-
-```bash
-multi new my-feature    # Clone from GitHub, create branch, start container
-multi                   # Launch TUI
-```
-
-If branch already exists, `multi new` just starts it.
-
 ## Usage
 
-```bash
-multi                    # TUI (above)
-multi ls                 # List branches
-multi new <branch>       # Create branch (clones from GitHub if needed)
-multi start/stop <branch>
-multi code <branch>      # Open VS Code
-multi proxy start|stop
+Just run `multi` - everything happens in the interactive TUI.
+
+```
+n           New branch (type name, enter to create)
+d           Delete branch (y/n confirmation)
+s           Start branch
+k           Kill (stop) branch
+t           Open terminal (tmux session)
+c           Open VS Code
+p           Toggle proxy
+enter       View branch details & URLs
+?           Help
+q           Quit
 ```
 
-## Keys
+First branch clone is from GitHub. Subsequent clones use existing local repo.
 
-`s` start | `k` kill | `t` terminal | `c` code | `m` matter | `p` proxy | `?` help | `q` quit
+## CLI Commands
+
+Only two commands exist outside the TUI:
+
+```bash
+multi proxy start|stop|status|fg   # Manage proxy server
+multi setup-dns                    # One-time DNS setup
+```
 
 ## Config
 

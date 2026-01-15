@@ -43,15 +43,14 @@ cp multi ~/.local/bin/
 
 **Test**
 ```bash
-multi new test-branch   # Clones from GitHub, starts container
-multi                   # TUI
+multi         # Launch TUI
+# Press 'n', type branch name, press enter
+# First clone is from GitHub (takes a while)
 ```
 
 ---
 
 ## macOS Setup (Ocean)
-
-Guide through setup and testing. Work through this checklist together:
 
 **Phase 1: Prerequisites**
 - [ ] Xcode command line tools: `xcode-select --install`
@@ -68,26 +67,23 @@ Guide through setup and testing. Work through this checklist together:
 - [ ] Install: `mkdir -p ~/.local/bin && cp multi ~/.local/bin/`
 - [ ] Add to PATH in ~/.zshrc: `export PATH="$HOME/.local/bin:$PATH"`
 - [ ] Reload: `source ~/.zshrc`
-- [ ] Verify: `multi --help`
 
 **Phase 3: Install devcontainer CLI**
 - [ ] `npm install -g @devcontainers/cli`
 - [ ] Verify: `devcontainer --version`
 
 **Phase 4: Test**
-- [ ] `multi new branch1` - clones from GitHub, creates branch, starts container
 - [ ] `multi` - launches TUI
+- [ ] `n` - type branch name, enter to create (clones from GitHub first time)
 - [ ] `t` - opens terminal
 - [ ] `c` - opens VS Code
 - [ ] `?` - shows help
 - [ ] `q` - quit
 
 **Phase 5: Cleanup (optional)**
-- [ ] `multi stop branch1`
-- [ ] `multi rm branch1`
+- [ ] `d` on a branch, then `y` to confirm deletion
 
 **Report Issues**
-Note anything that doesn't work:
 - Terminal spawning (iTerm2 vs Terminal.app detection)
 - DNS resolution for .localhost URLs
 - Error messages
@@ -97,53 +93,42 @@ Note anything that doesn't work:
 
 ## What This Is
 
-A CLI/TUI tool for managing multiple parallel Dark devcontainer instances with tmux integration.
+A TUI tool for managing multiple parallel Dark devcontainer instances with tmux integration.
 
 ## Current State
 
-**Go version (active):** Full rewrite complete, installed at `~/.local/bin/multi`
-- Interactive TUI when run with no args
-- All CLI commands: ls, new, start, stop, rm, code, urls, proxy, setup-dns
-- Claude status detection (waiting, working)
-- Clones from GitHub automatically if no local source
-- `multi new` idempotent - just starts if branch exists
-- Branch metadata stored in `~/.config/dark-multi/overrides/<branch>/metadata`
+Everything happens in the TUI. Just run `multi`.
 
-## TUI Shortcuts
-
+**TUI shortcuts:**
 ```
-Home screen:
-  up/down     Navigate branches
-  s           Start selected branch
-  k           Kill (stop) selected branch
-  t           Open terminal (per-branch tmux session)
-  c           Open VS Code
-  m           Open Matter (dark-packages canvas in browser)
-  p           Toggle proxy
-  enter       View branch details
-  ?           Help
-  q           Quit
-
-Branch detail:
-  up/down     Navigate URLs
-  o/enter     Open URL in browser
-  s/k         Start/Kill branch
-  c           VS Code
-  t           Terminal
-  l           View logs
-  esc         Back
-
-Display:
-  o / .       Running / stopped
-  3c +50 -10  Commits, lines added/removed vs main
+n           New branch (type name, enter)
+d           Delete branch (y/n confirm)
+s           Start branch
+k           Kill (stop) branch
+t           Open terminal (tmux)
+c           Open VS Code
+m           Open Matter (dark-packages canvas)
+p           Toggle proxy
+enter       View branch details & URLs
+?           Help
+q           Quit
 ```
+
+**Only CLI commands:**
+- `multi proxy start|stop|status|fg` - manage proxy
+- `multi setup-dns` - one-time DNS setup
+
+**Features:**
+- Clones from GitHub automatically
+- Claude status detection (waiting/working indicators)
+- Branch metadata in `~/.config/dark-multi/overrides/<branch>/`
 
 ## Architecture
 
 ```
 main.go           # Entry point
 branch/           # Branch struct, discovery
-cli/              # Cobra commands
+cli/              # Cobra commands (proxy, setup-dns only)
 claude/           # Claude status detection
 config/           # Paths, ports, env vars
 container/        # Devcontainer + Docker ops
@@ -156,43 +141,28 @@ tui/              # Bubbletea TUI (home, detail, logs, help)
 ## Key Concepts
 
 ### Port Mapping
-Container uses standard ports internally. Host ports by instance ID:
+Host ports by instance ID:
 - `bwd_port = 11001 + (instance_id * 100)` -> 11101, 11201, ...
 - `test_port = 10011 + (instance_id * 100)` -> 10111, 10211, ...
 
-### Override Configs
-Generated at `~/.config/dark-multi/overrides/<branch>/devcontainer.json`
-- Unique container names, ports, volumes per branch
-- Branch metadata in `metadata` file (ID, name, created)
-
 ### URL Proxy
 Routes `<canvas>.<branch>.dlio.localhost:9000` -> container's BwdServer port
-- Proxy listens on both IPv4 and IPv6
-- Start with: `multi proxy start`
 
 ### DNS
-`.localhost` TLD is handled by systemd-resolved (RFC 6761)
-- Resolves to both 127.0.0.1 and ::1 automatically
-- No dnsmasq needed on modern Linux
+`.localhost` TLD handled by systemd-resolved (RFC 6761) - no setup needed on modern Linux.
 
 ## Config
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DARK_ROOT` | `~/code/dark` | Where branches live |
-| `DARK_SOURCE` | GitHub | Repo to clone from (falls back to git@github.com:darklang/dark.git) |
-| `DARK_MULTI_TERMINAL` | `auto` | Terminal: gnome-terminal, kitty, alacritty, iterm2, etc |
-| `DARK_MULTI_PROXY_PORT` | `9000` | Proxy port |
+| Variable | Default |
+|----------|---------|
+| `DARK_ROOT` | `~/code/dark` |
+| `DARK_SOURCE` | GitHub |
+| `DARK_MULTI_TERMINAL` | `auto` |
+| `DARK_MULTI_PROXY_PORT` | `9000` |
 
 ## Building
 
 ```bash
-# Requires Go 1.21+
 go build -o multi .
 cp multi ~/.local/bin/
 ```
-
-## Known Issues
-
-- Proxy can crash silently when backgrounded; use `multi proxy fg` to debug
-- "canvas not found" means Dark canvases aren't loaded in container (not a multi issue)
