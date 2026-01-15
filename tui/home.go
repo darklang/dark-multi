@@ -5,7 +5,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/darklang/dark-multi/branch"
 	"github.com/darklang/dark-multi/claude"
@@ -37,6 +39,7 @@ type HomeModel struct {
 	loading       bool
 	inputMode     InputMode
 	inputText     string
+	spinner       spinner.Model
 }
 
 // Messages
@@ -58,14 +61,19 @@ type createStepMsg struct {
 
 // NewHomeModel creates a new home model.
 func NewHomeModel() HomeModel {
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 	return HomeModel{
 		loading: true,
+		spinner: s,
 	}
 }
 
 // Init initializes the model.
 func (m HomeModel) Init() tea.Cmd {
 	return tea.Batch(
+		m.spinner.Tick,
 		loadBranches,
 		checkProxyStatus,
 		tickCmd(),
@@ -287,6 +295,14 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+
+	default:
+		// Handle spinner updates
+		if m.loading {
+			var cmd tea.Cmd
+			m.spinner, cmd = m.spinner.Update(msg)
+			return m, cmd
+		}
 	}
 
 	return m, nil
@@ -393,19 +409,27 @@ func (m HomeModel) View() string {
 
 	case InputConfirmDelete:
 		if len(m.branches) > 0 {
-			branchName := m.branches[m.cursor].Name
-			b.WriteString(errorStyle.Render(fmt.Sprintf("Delete '%s'? ", branchName)))
-			b.WriteString("[y/n]")
+			br := m.branches[m.cursor]
+			if br.HasChanges() {
+				b.WriteString(errorStyle.Render(fmt.Sprintf("⚠ '%s' has uncommitted changes! ", br.Name)))
+				b.WriteString("Delete anyway? [y/n]")
+			} else {
+				b.WriteString(fmt.Sprintf("Delete '%s'? [y/n]", br.Name))
+			}
 			b.WriteString("\n")
 		}
 		return b.String()
 	}
 
-	// Message or error
+	// Message or error (with spinner when loading)
 	if m.err != nil {
 		b.WriteString(errorStyle.Render(fmt.Sprintf("Error: %v", m.err)))
 		b.WriteString("\n")
 	} else if m.message != "" {
+		if m.loading {
+			b.WriteString(m.spinner.View())
+			b.WriteString(" ")
+		}
 		b.WriteString(m.message)
 		b.WriteString("\n")
 	}
@@ -481,7 +505,13 @@ func (m HomeModel) handleInputMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.inputMode = InputNone
 			m.inputText = ""
 			m.loading = true
-			m.message = fmt.Sprintf("Cloning %s from GitHub...", name)
+			// Check if branch already exists
+			b := branch.New(name)
+			if b.Exists() {
+				m.message = fmt.Sprintf("Starting %s...", name)
+			} else {
+				m.message = fmt.Sprintf("Cloning %s from GitHub...", name)
+			}
 			return m, m.createAndStartBranch(name)
 
 		case "esc":

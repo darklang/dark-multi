@@ -33,10 +33,8 @@ type gitStatusMsg string
 // NewBranchDetailModel creates a branch detail view.
 func NewBranchDetailModel(b *branch.Branch) BranchDetailModel {
 	urls := []string{
-		fmt.Sprintf("dark-packages.%s.dlio.localhost:%d", b.Name, config.ProxyPort),
-		fmt.Sprintf("dark-editor.%s.dlio.localhost:%d", b.Name, config.ProxyPort),
-		fmt.Sprintf("localhost:%d (direct BwdServer)", b.BwdPortBase()),
-		fmt.Sprintf("localhost:%d (direct test server)", b.PortBase()),
+		fmt.Sprintf("dark-packages.%s.dlio.localhost:%d/ping", b.Name, config.ProxyPort),
+		fmt.Sprintf("dark-editor.%s.dlio.localhost:%d/a/dark-editor", b.Name, config.ProxyPort),
 	}
 
 	return BranchDetailModel{
@@ -143,10 +141,6 @@ func (m BranchDetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Open selected URL in browser
 			if len(m.urls) > 0 {
 				url := m.urls[m.urlCursor]
-				// Strip the description part
-				if idx := strings.Index(url, " ("); idx > 0 {
-					url = url[:idx]
-				}
 				openInBrowser(url)
 				m.message = fmt.Sprintf("Opened %s", url)
 			}
@@ -237,7 +231,6 @@ func (m BranchDetailModel) View() string {
 	b.WriteString(fmt.Sprintf("  Container: %s\n", m.containerInfo))
 	b.WriteString(fmt.Sprintf("  Status:    %s\n", statusStyle.Render(statusText)))
 	b.WriteString(fmt.Sprintf("  Git:       %s\n", m.gitStatus))
-	b.WriteString(fmt.Sprintf("  Ports:     %d+ (test), %d+ (bwd)\n", m.branch.PortBase(), m.branch.BwdPortBase()))
 	b.WriteString("\n")
 
 	// URLs section
