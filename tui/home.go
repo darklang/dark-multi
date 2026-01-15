@@ -395,14 +395,20 @@ func (m HomeModel) View() string {
 				}
 			}
 
-			// Claude status
+			// Claude status with activity snippet
 			claudeIndicator := ""
 			if cs, ok := m.claudeStatus[br.Name]; ok && cs != nil {
 				switch cs.State {
 				case "waiting":
 					claudeIndicator = " ⏳"
+					if cs.LastMsg != "" {
+						claudeIndicator += " " + helpStyle.Render(cs.LastMsg)
+					}
 				case "working":
 					claudeIndicator = runningStyle.Render(" ⚡")
+					if cs.LastMsg != "" {
+						claudeIndicator += " " + helpStyle.Render(cs.LastMsg)
+					}
 				}
 			}
 
