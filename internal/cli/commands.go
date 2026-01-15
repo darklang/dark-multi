@@ -506,10 +506,7 @@ func proxyCmd() *cobra.Command {
 
 			case "fg":
 				// Foreground mode - used by backgrounded process
-				if pid, running := proxy.IsRunning(); running {
-					fmt.Printf("\033[1;33m!\033[0m Proxy already running in background (PID %d)\n", pid)
-					os.Exit(1)
-				}
+				// Don't check IsRunning() here because the parent already wrote our PID to the file
 				fmt.Printf("\033[0;34m>\033[0m Starting proxy on port %d (foreground)...\n", config.ProxyPort)
 				proxy.Start(config.ProxyPort, false)
 

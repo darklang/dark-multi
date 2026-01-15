@@ -80,7 +80,8 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			proxyReq.Header.Add(key, value)
 		}
 	}
-	proxyReq.Header.Set("Host", canvasHost)
+	// Set Host on the request object (not just the header) - Go uses Request.Host for the Host header
+	proxyReq.Host = canvasHost
 
 	// Make request
 	client := &http.Client{Timeout: 30 * time.Second}
