@@ -65,7 +65,8 @@ func FindSourceRepo() string {
 		}
 	}
 
-	return ""
+	// Fall back to GitHub
+	return "git@github.com:darklang/dark.git"
 }
 
 // GetManagedBranches returns all managed branches, sorted by name.

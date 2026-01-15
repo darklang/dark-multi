@@ -116,43 +116,49 @@ func newCmd() *cobra.Command {
 			name := args[0]
 			b := branch.New(name)
 
+			// If branch already exists, just start it
 			if b.Exists() {
-				fmt.Fprintf(os.Stderr, "\033[0;31merror:\033[0m Branch '%s' already exists at %s\n", name, b.Path)
-				os.Exit(1)
+				if !b.IsManaged() {
+					// Existing but not managed - register it
+					instanceID := branch.FindNextInstanceID()
+					b.WriteMetadata(instanceID)
+					fmt.Printf("\033[0;34m>\033[0m Registered existing branch '%s' (ID=%d)\n", name, instanceID)
+				}
+			} else {
+				// Clone new branch
+				source := branch.FindSourceRepo()
+				if source == "" {
+					fmt.Fprintln(os.Stderr, "\033[0;31merror:\033[0m No source repo found. Set DARK_SOURCE or create 'main' first.")
+					os.Exit(1)
+				}
+
+				instanceID := branch.FindNextInstanceID()
+
+				fmt.Printf("\033[0;34m>\033[0m Creating branch '%s' from %s\n", name, source)
+				fmt.Printf("\033[0;34m>\033[0m   Instance ID: %d, ports: %d+\n", instanceID, 10011+instanceID*100)
+
+				os.MkdirAll(config.DarkRoot, 0755)
+
+				// Clone
+				cloneCmd := exec.Command("git", "clone", source, b.Path)
+				cloneCmd.Stdout = os.Stdout
+				cloneCmd.Stderr = os.Stderr
+				if err := cloneCmd.Run(); err != nil {
+					fmt.Fprintln(os.Stderr, "\033[0;31merror:\033[0m Clone failed")
+					os.Exit(1)
+				}
+
+				// Setup branch
+				fmt.Printf("\033[0;34m>\033[0m Checking out branch '%s' from '%s'...\n", name, base)
+				exec.Command("git", "-C", b.Path, "fetch", "origin").Run()
+				checkoutCmd := exec.Command("git", "-C", b.Path, "checkout", "-b", name, "origin/"+base)
+				if err := checkoutCmd.Run(); err != nil {
+					exec.Command("git", "-C", b.Path, "checkout", "-b", name, base).Run()
+				}
+
+				// Write metadata
+				b.WriteMetadata(instanceID)
 			}
-
-			source := branch.FindSourceRepo()
-			if source == "" {
-				fmt.Fprintln(os.Stderr, "\033[0;31merror:\033[0m No source repo found. Set DARK_SOURCE or create 'main' first.")
-				os.Exit(1)
-			}
-
-			instanceID := branch.FindNextInstanceID()
-
-			fmt.Printf("\033[0;34m>\033[0m Creating branch '%s' from %s\n", name, source)
-			fmt.Printf("\033[0;34m>\033[0m   Instance ID: %d, ports: %d+\n", instanceID, 10011+instanceID*100)
-
-			os.MkdirAll(config.DarkRoot, 0755)
-
-			// Clone
-			cloneCmd := exec.Command("git", "clone", source, b.Path)
-			cloneCmd.Stdout = os.Stdout
-			cloneCmd.Stderr = os.Stderr
-			if err := cloneCmd.Run(); err != nil {
-				fmt.Fprintln(os.Stderr, "\033[0;31merror:\033[0m Clone failed")
-				os.Exit(1)
-			}
-
-			// Setup branch
-			fmt.Printf("\033[0;34m>\033[0m Checking out branch '%s' from '%s'...\n", name, base)
-			exec.Command("git", "-C", b.Path, "fetch", "origin").Run()
-			checkoutCmd := exec.Command("git", "-C", b.Path, "checkout", "-b", name, "origin/"+base)
-			if err := checkoutCmd.Run(); err != nil {
-				exec.Command("git", "-C", b.Path, "checkout", "-b", name, base).Run()
-			}
-
-			// Write metadata
-			b.WriteMetadata(instanceID)
 
 			// Generate override config
 			overridePath, err := container.GenerateOverrideConfig(b)

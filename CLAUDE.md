@@ -8,6 +8,49 @@ When user says "go", ask: **"Are you Stachu or Ocean?"**
 Continue developing. Ask what to work on next.
 
 ### If Ocean
+Guide through macOS setup - see **macOS Setup** below.
+
+---
+
+## Linux Setup (Ubuntu/Pop!_OS)
+
+**Prerequisites**
+- [ ] Docker: running (`docker ps` works)
+- [ ] Node.js/npm: for devcontainer CLI
+- [ ] tmux: `sudo apt install tmux`
+
+**Install Go 1.21+**
+`apt install golang-go` gives old versions (1.18). Install manually:
+```bash
+wget -qO- https://go.dev/dl/go1.23.5.linux-amd64.tar.gz | tar -C ~/.local -xzf -
+echo 'export PATH="$HOME/.local/go/bin:$HOME/.local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+go version  # should be 1.21+
+```
+
+**Install devcontainer CLI**
+```bash
+npm install -g @devcontainers/cli
+```
+
+**Build & Install**
+```bash
+cd ~/code/dark-multi
+go build -o multi .
+mkdir -p ~/.local/bin
+cp multi ~/.local/bin/
+```
+
+**Test**
+```bash
+multi new test-branch   # Clones from GitHub, starts container
+multi                   # TUI
+```
+
+---
+
+## macOS Setup (Ocean)
+
 Guide through setup and testing. Work through this checklist together:
 
 **Phase 1: Prerequisites**
@@ -21,50 +64,27 @@ Guide through setup and testing. Work through this checklist together:
 - [ ] Install Go: `brew install go`
 - [ ] Verify: `go version` (should be 1.21+)
 - [ ] Clone: `git clone git@github.com:darklang/dark-multi.git ~/code/dark-multi`
-- [ ] Build: `cd ~/code/dark-multi && go build -o multi ./cmd/multi`
+- [ ] Build: `cd ~/code/dark-multi && go build -o multi .`
 - [ ] Install: `mkdir -p ~/.local/bin && cp multi ~/.local/bin/`
 - [ ] Add to PATH in ~/.zshrc: `export PATH="$HOME/.local/bin:$PATH"`
 - [ ] Reload: `source ~/.zshrc`
 - [ ] Verify: `multi --help`
 
-**Phase 3: Prepare Dark Directory**
-- [ ] Backup existing: `mv ~/code/dark ~/code/dark-backup` (if exists)
-- [ ] Clone dark repo: `git clone git@github.com:darklang/dark.git ~/code/dark`
-- [ ] Clear old configs: `rm -rf ~/.config/dark-multi`
+**Phase 3: Install devcontainer CLI**
+- [ ] `npm install -g @devcontainers/cli`
+- [ ] Verify: `devcontainer --version`
 
-**Phase 4: Environment Variables (optional)**
-Add to ~/.zshrc if defaults don't work:
-```bash
-export DARK_ROOT="$HOME/code/dark"           # where branches live
-export DARK_SOURCE="$HOME/code/dark"         # repo to clone from
-export DARK_MULTI_TERMINAL="iterm2"          # or "terminal" for Terminal.app
-export DARK_MULTI_PROXY_PORT="9000"
-```
-
-**Phase 5: Test with TWO Branches**
-Goal: Run 2 branches simultaneously to verify parallel instances work.
-
-- [ ] `multi ls` - should show "main" (or empty)
-- [ ] `multi new branch1` - creates first branch
-- [ ] `multi new branch2` - creates second branch
-- [ ] `multi start branch1` - start first (takes a while first time)
-- [ ] `multi start branch2` - start second
-- [ ] `multi ls` - both should show as running (●)
-
-**Phase 6: Test TUI**
+**Phase 4: Test**
+- [ ] `multi new branch1` - clones from GitHub, creates branch, starts container
 - [ ] `multi` - launches TUI
-- [ ] Arrow keys to navigate between branches
-- [ ] `t` on branch1 - opens terminal (iTerm2/Terminal.app with tmux)
-- [ ] `t` on branch2 - opens SEPARATE terminal window
-- [ ] `c` - opens VS Code for selected branch
+- [ ] `t` - opens terminal
+- [ ] `c` - opens VS Code
 - [ ] `?` - shows help
 - [ ] `q` - quit
 
-**Phase 7: Cleanup**
+**Phase 5: Cleanup (optional)**
 - [ ] `multi stop branch1`
-- [ ] `multi stop branch2`
-- [ ] `multi rm branch1` (optional - removes files)
-- [ ] `multi rm branch2` (optional)
+- [ ] `multi rm branch1`
 
 **Report Issues**
 Note anything that doesn't work:
@@ -84,16 +104,16 @@ A CLI/TUI tool for managing multiple parallel Dark devcontainer instances with t
 **Go version (active):** Full rewrite complete, installed at `~/.local/bin/multi`
 - Interactive TUI when run with no args
 - All CLI commands: ls, new, start, stop, rm, code, urls, proxy, setup-dns
-- Claude status detection (⏳ waiting, 🔄 working)
+- Claude status detection (waiting, working)
+- Clones from GitHub automatically if no local source
+- `multi new` idempotent - just starts if branch exists
 - Branch metadata stored in `~/.config/dark-multi/overrides/<branch>/metadata`
-
-**Python version:** Still exists at `multi.py` + `dark_multi/` but not used
 
 ## TUI Shortcuts
 
 ```
 Home screen:
-  ↑/↓         Navigate branches
+  up/down     Navigate branches
   s           Start selected branch
   k           Kill (stop) selected branch
   t           Open terminal (per-branch tmux session)
@@ -105,7 +125,7 @@ Home screen:
   q           Quit
 
 Branch detail:
-  ↑/↓         Navigate URLs
+  up/down     Navigate URLs
   o/enter     Open URL in browser
   s/k         Start/Kill branch
   c           VS Code
@@ -114,9 +134,8 @@ Branch detail:
   esc         Back
 
 Display:
-  ● / ○       Running / stopped
+  o / .       Running / stopped
   3c +50 -10  Commits, lines added/removed vs main
-  ⏳ / ⚡      Claude waiting / working
 ```
 
 ## Architecture
@@ -138,8 +157,8 @@ tui/              # Bubbletea TUI (home, detail, logs, help)
 
 ### Port Mapping
 Container uses standard ports internally. Host ports by instance ID:
-- `bwd_port = 11001 + (instance_id * 100)` → 11101, 11201, ...
-- `test_port = 10011 + (instance_id * 100)` → 10111, 10211, ...
+- `bwd_port = 11001 + (instance_id * 100)` -> 11101, 11201, ...
+- `test_port = 10011 + (instance_id * 100)` -> 10111, 10211, ...
 
 ### Override Configs
 Generated at `~/.config/dark-multi/overrides/<branch>/devcontainer.json`
@@ -147,7 +166,7 @@ Generated at `~/.config/dark-multi/overrides/<branch>/devcontainer.json`
 - Branch metadata in `metadata` file (ID, name, created)
 
 ### URL Proxy
-Routes `<canvas>.<branch>.dlio.localhost:9000` → container's BwdServer port
+Routes `<canvas>.<branch>.dlio.localhost:9000` -> container's BwdServer port
 - Proxy listens on both IPv4 and IPv6
 - Start with: `multi proxy start`
 
@@ -161,7 +180,7 @@ Routes `<canvas>.<branch>.dlio.localhost:9000` → container's BwdServer port
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DARK_ROOT` | `~/code/dark` | Where branches live |
-| `DARK_SOURCE` | `~/code/dark` | Repo to clone from |
+| `DARK_SOURCE` | GitHub | Repo to clone from (falls back to git@github.com:darklang/dark.git) |
 | `DARK_MULTI_TERMINAL` | `auto` | Terminal: gnome-terminal, kitty, alacritty, iterm2, etc |
 | `DARK_MULTI_PROXY_PORT` | `9000` | Proxy port |
 
