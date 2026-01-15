@@ -14,6 +14,7 @@ import (
 type Status struct {
 	State      string    // "waiting", "working", "idle"
 	LastMsg    string    // Truncated last message/activity
+	LastTool   string    // Last tool used (Bash, Read, Edit, etc.)
 	LastUpdate time.Time // When the conversation was last updated
 }
 
@@ -24,8 +25,15 @@ type Message struct {
 	Message struct {
 		Role    string `json:"role"`
 		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
+			Type  string `json:"type"`
+			Text  string `json:"text"`
+			Name  string `json:"name"`  // Tool name for tool_use
+			Input struct {
+				Description string `json:"description"`
+				Command     string `json:"command"`
+				FilePath    string `json:"file_path"`
+				Pattern     string `json:"pattern"`
+			} `json:"input"`
 		} `json:"content"`
 	} `json:"message"`
 }
@@ -68,11 +76,12 @@ func GetStatus(branchPath string) *Status {
 	}
 
 	// Read last message from file
-	lastMsg, lastRole := readLastMessage(mostRecent)
+	lastMsg, lastTool, lastRole := readLastMessage(mostRecent)
 
 	status := &Status{
 		LastUpdate: mostRecentTime,
-		LastMsg:    truncate(lastMsg, 40),
+		LastMsg:    truncate(lastMsg, 35),
+		LastTool:   lastTool,
 	}
 
 	// Determine state based on timing and last role
@@ -101,15 +110,16 @@ func GetStatus(branchPath string) *Status {
 }
 
 // readLastMessage reads the last assistant message from a JSONL file.
-func readLastMessage(filepath string) (content string, role string) {
+func readLastMessage(filepath string) (content string, toolName string, role string) {
 	file, err := os.Open(filepath)
 	if err != nil {
-		return "", ""
+		return "", "", ""
 	}
 	defer file.Close()
 
 	// Read all lines to find the last meaningful message
-	var lastAssistantMsg string
+	var lastMsg string
+	var lastTool string
 	var lastRole string
 
 	scanner := bufio.NewScanner(file)
@@ -131,11 +141,25 @@ func readLastMessage(filepath string) (content string, role string) {
 		// Handle different message formats
 		if msg.Type == "assistant" && msg.Message.Role == "assistant" {
 			lastRole = "assistant"
-			// Extract text from content blocks
+			// Extract from content blocks (prefer tool_use, then text)
 			for _, block := range msg.Message.Content {
-				if block.Type == "text" && block.Text != "" {
-					lastAssistantMsg = block.Text
-					break
+				if block.Type == "tool_use" && block.Name != "" {
+					lastTool = block.Name
+					// Get description from input
+					if block.Input.Description != "" {
+						lastMsg = block.Input.Description
+					} else if block.Input.FilePath != "" {
+						lastMsg = block.Input.FilePath
+					} else if block.Input.Pattern != "" {
+						lastMsg = block.Input.Pattern
+					} else if block.Input.Command != "" {
+						lastMsg = block.Input.Command
+					}
+				} else if block.Type == "text" && block.Text != "" {
+					// Only use text if no tool_use found yet
+					if lastTool == "" {
+						lastMsg = block.Text
+					}
 				}
 			}
 		} else if msg.Type == "user" || msg.Role == "user" {
@@ -143,7 +167,7 @@ func readLastMessage(filepath string) (content string, role string) {
 		}
 	}
 
-	return lastAssistantMsg, lastRole
+	return lastMsg, lastTool, lastRole
 }
 
 // truncate shortens a string to maxLen, adding "..." if truncated.

@@ -401,12 +401,15 @@ func (m HomeModel) View() string {
 				switch cs.State {
 				case "waiting":
 					claudeIndicator = " ⏳"
-					if cs.LastMsg != "" {
-						claudeIndicator += " " + helpStyle.Render(cs.LastMsg)
-					}
 				case "working":
 					claudeIndicator = runningStyle.Render(" ⚡")
-					if cs.LastMsg != "" {
+					// Show what Claude is doing
+					if cs.LastTool != "" {
+						claudeIndicator += " " + helpStyle.Render(cs.LastTool)
+						if cs.LastMsg != "" {
+							claudeIndicator += helpStyle.Render(": "+cs.LastMsg)
+						}
+					} else if cs.LastMsg != "" {
 						claudeIndicator += " " + helpStyle.Render(cs.LastMsg)
 					}
 				}
