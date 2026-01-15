@@ -1,5 +1,60 @@
 # Dark Multi - Claude Context
 
+## go
+
+When user says "go", ask: **"Are you Stachu or Ocean?"**
+
+### If Stachu
+Continue developing. Check `todos/` for planned work, or ask what to work on next.
+
+### If Ocean
+Guide through setup and testing. Work through this checklist together:
+
+**Phase 1: Setup**
+- [ ] Install Go 1.21+ (`brew install go` or download from go.dev)
+- [ ] Verify: `go version` shows 1.21+
+- [ ] Clone this repo somewhere (e.g., `~/code/dark-multi`)
+- [ ] Build: `cd ~/code/dark-multi && go build -o multi ./cmd/multi`
+- [ ] Install: `cp multi ~/.local/bin/` (or add to PATH)
+- [ ] Verify: `multi --help` works
+
+**Phase 2: Prepare Dark Directory**
+- [ ] Backup existing ~/code/dark if needed: `mv ~/code/dark ~/code/dark-backup`
+- [ ] Clone fresh dark repo: `git clone <dark-repo-url> ~/code/dark`
+- [ ] Clear any old override configs: `rm -rf ~/.config/dark-multi`
+
+**Phase 3: Test CLI Commands**
+- [ ] `multi ls` - should show empty or just "main"
+- [ ] `multi new test1` - creates a new branch
+- [ ] `multi ls` - should show test1 (stopped)
+- [ ] `multi start test1` - starts the devcontainer (takes a while first time)
+- [ ] `multi ls` - should show test1 as running
+- [ ] `multi code test1` - opens VS Code attached to container
+- [ ] `multi stop test1` - stops the container
+
+**Phase 4: Test TUI**
+- [ ] `multi` (no args) - launches interactive TUI
+- [ ] Navigate with arrow keys
+- [ ] Press `s` to start a branch
+- [ ] Press `t` to open terminal (should open iTerm2 or Terminal.app)
+- [ ] Press `c` to open VS Code
+- [ ] Press `?` for help
+- [ ] Press `q` to quit
+
+**Phase 5: Test Proxy (if needed)**
+- [ ] `multi proxy start` - starts the URL proxy on :9000
+- [ ] `multi urls` - lists accessible URLs
+- [ ] Try opening a URL in browser
+- [ ] `multi proxy stop`
+
+**Report Issues**
+Note anything that doesn't work - especially:
+- Terminal spawning (iTerm2 vs Terminal.app)
+- DNS resolution for .localhost URLs
+- Any error messages
+
+---
+
 ## What This Is
 
 A CLI/TUI tool for managing multiple parallel Dark devcontainer instances with tmux integration.
