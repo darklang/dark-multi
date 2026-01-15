@@ -21,10 +21,10 @@ Home screen:
   ↑/↓         Navigate branches
   s           Start selected branch
   k           Kill (stop) selected branch
-  m           Open Matter (dark-packages canvas in browser)
+  t           Open terminal (per-branch tmux session)
   c           Open VS Code
+  m           Open Matter (dark-packages canvas in browser)
   p           Toggle proxy
-  t           Attach to tmux
   enter       View branch details
   ?           Help
   q           Quit
@@ -34,8 +34,14 @@ Branch detail:
   o/enter     Open URL in browser
   s/k         Start/Kill branch
   c           VS Code
-  t           tmux
+  t           Terminal
+  l           View logs
   esc         Back
+
+Display:
+  ● / ○       Running / stopped
+  3c +50 -10  Commits, lines added/removed vs main
+  ⏳ / ⚡      Claude waiting / working
 ```
 
 ## Architecture
@@ -60,6 +66,7 @@ internal/
     ├── app.go              # Bubbletea app entry
     ├── home.go             # Home screen
     ├── branch_detail.go    # Branch detail view
+    ├── logs.go             # Log viewer
     ├── help.go             # Help screen
     ├── operations.go       # Start/stop/code operations
     └── styles.go           # Lipgloss styles
@@ -86,6 +93,15 @@ Routes `<canvas>.<branch>.dlio.localhost:9000` → container's BwdServer port
 `.localhost` TLD is handled by systemd-resolved (RFC 6761)
 - Resolves to both 127.0.0.1 and ::1 automatically
 - No dnsmasq needed on modern Linux
+
+## Config
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DARK_ROOT` | `~/code/dark` | Where branches live |
+| `DARK_SOURCE` | `~/code/dark` | Repo to clone from |
+| `DARK_MULTI_TERMINAL` | `auto` | Terminal: gnome-terminal, kitty, alacritty, iterm2, etc |
+| `DARK_MULTI_PROXY_PORT` | `9000` | Proxy port |
 
 ## Building
 
