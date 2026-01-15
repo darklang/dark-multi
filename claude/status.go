@@ -84,7 +84,7 @@ func GetStatus(branchPath string) *Status {
 		LastTool:   lastTool,
 	}
 
-	// Determine state based on timing and last role
+	// Determine state based on timing, last role, and whether a tool was used
 	timeSinceUpdate := time.Since(mostRecentTime)
 
 	if timeSinceUpdate > 30*time.Minute {
@@ -92,8 +92,11 @@ func GetStatus(branchPath string) *Status {
 	} else if timeSinceUpdate < 10*time.Second {
 		// Very recent activity - likely working
 		status.State = "working"
+	} else if lastTool != "" && timeSinceUpdate < 5*time.Minute {
+		// Tool was used recently - still working (tool running or processing result)
+		status.State = "working"
 	} else if lastRole == "assistant" {
-		// Claude sent last message, waiting for user
+		// Claude sent text message, waiting for user input
 		status.State = "waiting"
 	} else if lastRole == "user" {
 		// User sent last, Claude should be working (or done)
