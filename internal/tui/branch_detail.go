@@ -186,6 +186,11 @@ func (m BranchDetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return operationDoneMsg{"Killed"}
 				}
 			}
+
+		case "l":
+			// View logs
+			logs := NewLogViewerModel(m.branch)
+			return logs, logs.Init()
 		}
 
 	case containerInfoMsg:
@@ -257,7 +262,7 @@ func (m BranchDetailModel) View() string {
 	b.WriteString("\n")
 	b.WriteString("  " + strings.Repeat("─", 50) + "\n")
 
-	actions := "  [s]tart  [k]ill  [c]ode  [t]mux  [o]pen url"
+	actions := "  [s]tart  [k]ill  [c]ode  [l]ogs  [t]mux  [o]pen url"
 	b.WriteString(helpStyle.Render(actions))
 	b.WriteString("\n\n")
 
