@@ -41,6 +41,11 @@ mkdir -p ~/.local/bin
 cp multi ~/.local/bin/
 ```
 
+**Increase inotify limits (multiple containers need more file watchers)**
+```bash
+multi setup-inotify
+```
+
 **Test**
 ```bash
 multi         # Launch TUI
@@ -117,6 +122,7 @@ q           Quit
 **Only CLI commands:**
 - `multi proxy start|stop|status|fg` - manage proxy
 - `multi setup-dns` - one-time DNS setup
+- `multi setup-inotify` - increase file watcher limits (Linux only)
 
 **Features:**
 - Clones from GitHub automatically
@@ -128,11 +134,12 @@ q           Quit
 ```
 main.go           # Entry point
 branch/           # Branch struct, discovery
-cli/              # Cobra commands (proxy, setup-dns only)
+cli/              # Cobra commands (proxy, setup-dns, setup-inotify)
 claude/           # Claude status detection
 config/           # Paths, ports, env vars
 container/        # Devcontainer + Docker ops
 dns/              # DNS setup (Linux/macOS)
+inotify/          # inotify limit setup (Linux)
 proxy/            # HTTP proxy server
 tmux/             # Tmux session management
 tui/              # Bubbletea TUI (home, detail, logs, help)

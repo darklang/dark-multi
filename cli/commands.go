@@ -9,6 +9,7 @@ import (
 
 	"github.com/darklang/dark-multi/config"
 	"github.com/darklang/dark-multi/dns"
+	"github.com/darklang/dark-multi/inotify"
 	"github.com/darklang/dark-multi/proxy"
 	"github.com/darklang/dark-multi/tui"
 )
@@ -41,6 +42,7 @@ TUI shortcuts:
 
 	rootCmd.AddCommand(proxyCmd())
 	rootCmd.AddCommand(setupDNSCmd())
+	rootCmd.AddCommand(setupInotifyCmd())
 
 	return rootCmd
 }
@@ -109,6 +111,30 @@ func setupDNSCmd() *cobra.Command {
 		Short: "Set up wildcard DNS for *.dlio.localhost",
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := dns.Setup(); err != nil {
+				fmt.Fprintf(os.Stderr, "\033[0;31merror:\033[0m %v\n", err)
+				os.Exit(1)
+			}
+		},
+	}
+}
+
+func setupInotifyCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "setup-inotify",
+		Short: "Increase inotify limits for multiple containers (Linux only)",
+		Long: `Increase inotify file watcher limits for running multiple dev containers.
+
+Each container's file watcher (for hot reload, etc.) consumes inotify watches.
+The default Linux limits are too low for multiple containers.
+
+This command:
+  1. Increases fs.inotify.max_user_watches to 524288
+  2. Increases fs.inotify.max_user_instances to 512
+  3. Makes changes persistent via /etc/sysctl.d/
+
+Requires sudo. Only needed on Linux (macOS uses FSEvents).`,
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := inotify.Setup(); err != nil {
 				fmt.Fprintf(os.Stderr, "\033[0;31merror:\033[0m %v\n", err)
 				os.Exit(1)
 			}
