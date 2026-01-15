@@ -39,9 +39,6 @@ func GetStatus(branchPath string) *Status {
 
 	// Claude encodes paths: /home/stachu/code/dark/main -> -home-stachu-code-dark-main
 	encodedPath := strings.ReplaceAll(branchPath, "/", "-")
-	if strings.HasPrefix(encodedPath, "-") {
-		encodedPath = encodedPath[1:] // Remove leading dash
-	}
 
 	projectsDir := filepath.Join(homeDir, ".claude", "projects")
 	projectDir := filepath.Join(projectsDir, encodedPath)
