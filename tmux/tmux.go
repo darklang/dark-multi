@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
 	"github.com/darklang/dark-multi/config"
@@ -58,15 +57,10 @@ func CreateBranchSession(branchName string, containerID string, branchPath strin
 	exec.Command("tmux", "send-keys", "-t", session,
 		fmt.Sprintf("docker exec -it -w /home/dark/app %s bash", containerID), "Enter").Run()
 
-	// Split and create right pane: claude on host
+	// Split and create right pane: claude inside container (--resume picks up last session)
 	exec.Command("tmux", "split-window", "-h", "-t", session).Run()
-
-	workspace := branchPath
-	if workspace == "" {
-		workspace = filepath.Join(config.DarkRoot, branchName)
-	}
 	exec.Command("tmux", "send-keys", "-t", fmt.Sprintf("%s.1", session),
-		fmt.Sprintf("cd %s && claude", workspace), "Enter").Run()
+		fmt.Sprintf("docker exec -it -w /home/dark/app %s claude --resume", containerID), "Enter").Run()
 
 	// Select left pane (CLI)
 	exec.Command("tmux", "select-pane", "-t", fmt.Sprintf("%s.0", session)).Run()
