@@ -120,10 +120,30 @@ func GenerateOverrideConfig(b *branch.Branch) (string, error) {
 	cfg["runArgs"] = newRunArgs
 
 	// Override mounts with branch-specific volumes
+	homeDir, _ := os.UserHomeDir()
+	claudeDir := filepath.Join(homeDir, ".claude")
 	cfg["mounts"] = []interface{}{
 		fmt.Sprintf("type=volume,src=dark_nuget_%s,dst=/home/dark/.nuget", b.Name),
 		fmt.Sprintf("type=volume,src=dark-vscode-ext-%s,dst=/home/dark/.vscode-server/extensions", b.Name),
 		fmt.Sprintf("type=volume,src=dark-vscode-ext-insiders-%s,dst=/home/dark/.vscode-server-insiders/extensions", b.Name),
+		// Mount Claude credentials and config (shared across branches)
+		fmt.Sprintf("type=bind,src=%s,dst=/home/dark/.claude,consistency=cached", claudeDir),
+	}
+
+	// Add Claude installation to postCreateCommand if not already there
+	postCreate := ""
+	if existing, ok := cfg["postCreateCommand"].(string); ok {
+		postCreate = existing
+	}
+	if !strings.Contains(postCreate, "claude-code") {
+		// Use sudo since container user doesn't have root perms for global npm
+		claudeInstall := "sudo npm install -g @anthropic-ai/claude-code 2>/dev/null || true"
+		if postCreate != "" {
+			postCreate = claudeInstall + " && " + postCreate
+		} else {
+			postCreate = claudeInstall
+		}
+		cfg["postCreateCommand"] = postCreate
 	}
 
 	// Write merged config
