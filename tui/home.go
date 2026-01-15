@@ -25,10 +25,18 @@ const (
 	InputConfirmDelete
 )
 
+// GitStatsInfo holds cached git stats for a branch.
+type GitStatsInfo struct {
+	Commits int
+	Added   int
+	Removed int
+}
+
 // HomeModel is the main TUI model.
 type HomeModel struct {
 	branches      []*branch.Branch
 	claudeStatus  map[string]*claude.Status
+	gitStats      map[string]*GitStatsInfo
 	cursor        int
 	proxyRunning  bool
 	width         int
@@ -46,6 +54,7 @@ type HomeModel struct {
 type branchesLoadedMsg []*branch.Branch
 type proxyStatusMsg bool
 type claudeStatusMsg map[string]*claude.Status
+type gitStatsMsg map[string]*GitStatsInfo
 type tickMsg time.Time
 type operationDoneMsg struct{ message string }
 type operationErrMsg struct{ err error }
@@ -96,6 +105,21 @@ func loadClaudeStatus(branches []*branch.Branch) tea.Cmd {
 			statuses[b.Name] = claude.GetStatus(b.Path)
 		}
 		return claudeStatusMsg(statuses)
+	}
+}
+
+func loadGitStats(branches []*branch.Branch) tea.Cmd {
+	return func() tea.Msg {
+		stats := make(map[string]*GitStatsInfo)
+		for _, b := range branches {
+			commits, added, removed := b.GitStats()
+			stats[b.Name] = &GitStatsInfo{
+				Commits: commits,
+				Added:   added,
+				Removed: removed,
+			}
+		}
+		return gitStatsMsg(stats)
 	}
 }
 
@@ -249,8 +273,8 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.cursor >= len(m.branches) {
 			m.cursor = max(0, len(m.branches)-1)
 		}
-		// Also load Claude status after branches load
-		return m, loadClaudeStatus(m.branches)
+		// Load Claude status and git stats after branches load
+		return m, tea.Batch(loadClaudeStatus(m.branches), loadGitStats(m.branches))
 
 	case proxyStatusMsg:
 		m.proxyRunning = bool(msg)
@@ -260,9 +284,13 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.claudeStatus = msg
 		return m, nil
 
+	case gitStatsMsg:
+		m.gitStats = msg
+		return m, nil
+
 	case tickMsg:
-		// Periodic refresh of Claude status
-		return m, tea.Batch(loadClaudeStatus(m.branches), tickCmd())
+		// Periodic refresh of Claude status and git stats
+		return m, tea.Batch(loadClaudeStatus(m.branches), loadGitStats(m.branches), tickCmd())
 
 	case progressMsg:
 		m.message = msg.message
@@ -351,12 +379,20 @@ func (m HomeModel) View() string {
 				name = selectedStyle.Render(name)
 			}
 
-			// Git stats (commits, +/- vs main)
+			// Git stats (commits ahead, total +/- vs origin/main including uncommitted)
 			var stats string
-			commits, added, removed := br.GitStats()
-			if commits > 0 || added > 0 || removed > 0 {
-				stats = fmt.Sprintf(" %dc +%d -%d", commits, added, removed)
-				stats = modifiedStyle.Render(stats)
+			if gs, ok := m.gitStats[br.Name]; ok && gs != nil {
+				if gs.Commits > 0 || gs.Added > 0 || gs.Removed > 0 {
+					parts := []string{}
+					if gs.Commits > 0 {
+						parts = append(parts, fmt.Sprintf("%dc", gs.Commits))
+					}
+					if gs.Added > 0 || gs.Removed > 0 {
+						parts = append(parts, fmt.Sprintf("+%d -%d", gs.Added, gs.Removed))
+					}
+					stats = " " + strings.Join(parts, " ")
+					stats = modifiedStyle.Render(stats)
+				}
 			}
 
 			// Claude status
