@@ -144,7 +144,10 @@ func readLastMessage(filepath string) (content string, toolName string, role str
 		// Handle different message formats
 		if msg.Type == "assistant" && msg.Message.Role == "assistant" {
 			lastRole = "assistant"
-			// Extract from content blocks (prefer tool_use, then text)
+			// Reset for each assistant message - we only care about the latest
+			lastTool = ""
+			lastMsg = ""
+			// Extract from content blocks
 			for _, block := range msg.Message.Content {
 				if block.Type == "tool_use" && block.Name != "" {
 					lastTool = block.Name
@@ -158,11 +161,9 @@ func readLastMessage(filepath string) (content string, toolName string, role str
 					} else if block.Input.Command != "" {
 						lastMsg = block.Input.Command
 					}
-				} else if block.Type == "text" && block.Text != "" {
-					// Only use text if no tool_use found yet
-					if lastTool == "" {
-						lastMsg = block.Text
-					}
+				} else if block.Type == "text" && block.Text != "" && lastTool == "" {
+					// Use text only if no tool_use in this message
+					lastMsg = block.Text
 				}
 			}
 		} else if msg.Type == "user" || msg.Role == "user" {
