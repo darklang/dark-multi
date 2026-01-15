@@ -122,29 +122,16 @@ Display:
 ## Architecture
 
 ```
-cmd/multi/main.go           # Entry point
-internal/
-├── config/config.go        # Paths, ports, env vars
-├── branch/
-│   ├── branch.go           # Branch struct + operations
-│   └── discovery.go        # Find branches, source repo
-├── container/
-│   ├── devcontainer.go     # Override config generation
-│   └── docker.go           # Docker operations
-├── tmux/tmux.go            # Tmux session management
-├── proxy/
-│   ├── proxy.go            # HTTP proxy server (IPv4+IPv6)
-│   └── handler.go          # Request routing
-├── dns/dns.go              # DNS setup (Linux/macOS)
-├── claude/status.go        # Claude status from conversation files
-└── tui/
-    ├── app.go              # Bubbletea app entry
-    ├── home.go             # Home screen
-    ├── branch_detail.go    # Branch detail view
-    ├── logs.go             # Log viewer
-    ├── help.go             # Help screen
-    ├── operations.go       # Start/stop/code operations
-    └── styles.go           # Lipgloss styles
+main.go           # Entry point
+branch/           # Branch struct, discovery
+cli/              # Cobra commands
+claude/           # Claude status detection
+config/           # Paths, ports, env vars
+container/        # Devcontainer + Docker ops
+dns/              # DNS setup (Linux/macOS)
+proxy/            # HTTP proxy server
+tmux/             # Tmux session management
+tui/              # Bubbletea TUI (home, detail, logs, help)
 ```
 
 ## Key Concepts
@@ -181,9 +168,9 @@ Routes `<canvas>.<branch>.dlio.localhost:9000` → container's BwdServer port
 ## Building
 
 ```bash
-# Requires Go 1.21+ (installed at ~/go-sdk/go)
-~/go-sdk/go/bin/go build -o multi ./cmd/multi
-cp multi ~/.local/bin/multi
+# Requires Go 1.21+
+go build -o multi .
+cp multi ~/.local/bin/
 ```
 
 ## Known Issues

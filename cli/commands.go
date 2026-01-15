@@ -10,13 +10,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/darklang/dark-multi/internal/branch"
-	"github.com/darklang/dark-multi/internal/config"
-	"github.com/darklang/dark-multi/internal/container"
-	"github.com/darklang/dark-multi/internal/dns"
-	"github.com/darklang/dark-multi/internal/proxy"
-	"github.com/darklang/dark-multi/internal/tmux"
-	"github.com/darklang/dark-multi/internal/tui"
+	"github.com/darklang/dark-multi/branch"
+	"github.com/darklang/dark-multi/config"
+	"github.com/darklang/dark-multi/container"
+	"github.com/darklang/dark-multi/dns"
+	"github.com/darklang/dark-multi/proxy"
+	"github.com/darklang/dark-multi/tmux"
+	"github.com/darklang/dark-multi/tui"
 )
 
 // NewRootCmd creates the root cobra command.
