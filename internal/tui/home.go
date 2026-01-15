@@ -6,7 +6,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/stachu/dark-multi/internal/branch"
 	"github.com/stachu/dark-multi/internal/claude"
@@ -258,43 +257,52 @@ func (m HomeModel) View() string {
 		b.WriteString(stoppedStyle.Render("  No branches yet. Create one with 'multi new <name>'"))
 		b.WriteString("\n")
 	} else {
+		// Find max branch name length for alignment
+		maxLen := 0
+		for _, br := range m.branches {
+			if len(br.Name) > maxLen {
+				maxLen = len(br.Name)
+			}
+		}
+
 		for i, br := range m.branches {
 			cursor := "  "
-			style := lipgloss.NewStyle()
 			if i == m.cursor {
 				cursor = "> "
-				style = selectedStyle
 			}
 
 			// Running indicator
 			indicator := stoppedStyle.Render("○")
-			status := stoppedStyle.Render("stopped")
 			if br.IsRunning() {
 				indicator = runningStyle.Render("●")
-				status = runningStyle.Render("running")
 			}
 
-			// Git status
-			gitStatus := ""
+			// Branch name (padded, then styled if selected)
+			name := fmt.Sprintf("%-*s", maxLen, br.Name)
+			if i == m.cursor {
+				name = selectedStyle.Render(name)
+			}
+
+			// Status indicators (compact)
+			var indicators []string
 			if br.HasChanges() {
-				gitStatus = modifiedStyle.Render(" [mod]")
+				indicators = append(indicators, modifiedStyle.Render("*"))
 			}
-
-			// Claude status
-			claudeInfo := ""
 			if cs, ok := m.claudeStatus[br.Name]; ok && cs != nil {
 				switch cs.State {
 				case "waiting":
-					claudeInfo = modifiedStyle.Render(" ⏳")
+					indicators = append(indicators, "⏳")
 				case "working":
-					claudeInfo = runningStyle.Render(" 🔄")
+					indicators = append(indicators, runningStyle.Render("⚡"))
 				}
 			}
 
-			line := fmt.Sprintf("%s%s %-12s  %s%s%s",
-				cursor, indicator, style.Render(br.Name), status, gitStatus, claudeInfo)
-			b.WriteString(line)
-			b.WriteString("\n")
+			suffix := ""
+			if len(indicators) > 0 {
+				suffix = " " + strings.Join(indicators, " ")
+			}
+
+			b.WriteString(fmt.Sprintf("%s%s %s%s\n", cursor, indicator, name, suffix))
 		}
 	}
 
