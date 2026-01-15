@@ -123,6 +123,11 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.branches) > 0 {
 				b := m.branches[m.cursor]
 				if b.IsRunning() {
+					// Already running - but ensure tmux window exists
+					if !tmux.WindowExists(b.Name) {
+						m.message = fmt.Sprintf("Creating tmux window for %s...", b.Name)
+						return m, m.ensureTmuxWindow(b)
+					}
 					m.message = fmt.Sprintf("%s is already running", b.Name)
 				} else {
 					m.loading = true
@@ -334,6 +339,19 @@ func (m HomeModel) stopBranch(b *branch.Branch) tea.Cmd {
 			return operationErrMsg{err}
 		}
 		return operationDoneMsg{fmt.Sprintf("Stopped %s", b.Name)}
+	}
+}
+
+func (m HomeModel) ensureTmuxWindow(b *branch.Branch) tea.Cmd {
+	return func() tea.Msg {
+		containerID, err := b.ContainerID()
+		if err != nil || containerID == "" {
+			return operationErrMsg{fmt.Errorf("couldn't get container ID for %s", b.Name)}
+		}
+		if err := tmux.CreateWindow(b.Name, containerID, b.Path); err != nil {
+			return operationErrMsg{err}
+		}
+		return operationDoneMsg{fmt.Sprintf("Created tmux window for %s", b.Name)}
 	}
 }
 
