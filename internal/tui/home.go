@@ -111,7 +111,7 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "t":
-			// Attach to tmux session - create windows for running branches if needed
+			// Open tmux in terminal - create windows for running branches if needed
 			hasRunning := false
 			for _, b := range m.branches {
 				if b.IsRunning() {
@@ -123,8 +123,12 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			if hasRunning && tmux.SessionExists() {
-				m.quitting = true
-				return m, func() tea.Msg { return attachTmuxMsg{} }
+				if err := tmux.OpenInTerminal(); err != nil {
+					m.message = fmt.Sprintf("Error: %v", err)
+				} else {
+					m.message = "Opened tmux in terminal"
+				}
+				return m, nil
 			}
 			m.message = "No running branches to attach to."
 

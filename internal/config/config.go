@@ -24,6 +24,9 @@ var (
 	ProxyPort = getEnvOrDefaultInt("DARK_MULTI_PROXY_PORT", 9000)
 	// ProxyPIDFile stores the proxy process ID
 	ProxyPIDFile = filepath.Join(ConfigDir, "proxy.pid")
+	// Terminal is the terminal emulator to use for tmux
+	// Options: gnome-terminal, kitty, alacritty, hyper, iterm2, terminal (macOS), auto
+	Terminal = getEnvOrDefault("DARK_MULTI_TERMINAL", "auto")
 )
 
 const (

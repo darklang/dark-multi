@@ -193,6 +193,139 @@ func AttachExec() {
 	os.Exit(execCommand(path, "tmux", "attach", "-t", config.TmuxSession))
 }
 
+// HasAttachedClients returns true if tmux session has clients attached.
+func HasAttachedClients() bool {
+	if !SessionExists() {
+		return false
+	}
+	out, err := exec.Command("tmux", "list-clients", "-t", config.TmuxSession).Output()
+	if err != nil {
+		return false
+	}
+	return len(strings.TrimSpace(string(out))) > 0
+}
+
+// OpenInTerminal opens tmux in a terminal window.
+// If already attached somewhere, tries to focus that window.
+// Otherwise spawns a new terminal.
+func OpenInTerminal() error {
+	if !SessionExists() {
+		return fmt.Errorf("no tmux session")
+	}
+
+	// If already attached, try to focus the existing window
+	if HasAttachedClients() {
+		if focusExistingTerminal() {
+			return nil
+		}
+		// Couldn't focus, will spawn new terminal anyway
+	}
+
+	return spawnTerminal()
+}
+
+// focusExistingTerminal tries to focus a terminal window with tmux.
+func focusExistingTerminal() bool {
+	// Try xdotool (Linux)
+	if _, err := exec.LookPath("xdotool"); err == nil {
+		// Search for window with tmux session name
+		cmd := exec.Command("xdotool", "search", "--name", config.TmuxSession)
+		out, err := cmd.Output()
+		if err == nil && len(strings.TrimSpace(string(out))) > 0 {
+			// Get first window ID
+			windowID := strings.Split(strings.TrimSpace(string(out)), "\n")[0]
+			exec.Command("xdotool", "windowactivate", windowID).Run()
+			return true
+		}
+	}
+
+	// Try wmctrl (Linux)
+	if _, err := exec.LookPath("wmctrl"); err == nil {
+		// Activate window with tmux in title
+		if exec.Command("wmctrl", "-a", config.TmuxSession).Run() == nil {
+			return true
+		}
+	}
+
+	// macOS: try osascript
+	if _, err := exec.LookPath("osascript"); err == nil {
+		script := `tell application "System Events" to set frontmost of (first process whose name contains "Terminal" or name contains "iTerm") to true`
+		exec.Command("osascript", "-e", script).Run()
+		// Can't reliably verify success on macOS
+	}
+
+	return false
+}
+
+// spawnTerminal spawns a new terminal window with tmux attach.
+func spawnTerminal() error {
+	terminal := detectTerminal()
+	attachCmd := fmt.Sprintf("tmux attach -t %s", config.TmuxSession)
+
+	var cmd *exec.Cmd
+	switch terminal {
+	case "gnome-terminal":
+		cmd = exec.Command("gnome-terminal", "--", "bash", "-c", attachCmd)
+	case "kitty":
+		cmd = exec.Command("kitty", "bash", "-c", attachCmd)
+	case "alacritty":
+		cmd = exec.Command("alacritty", "-e", "bash", "-c", attachCmd)
+	case "hyper":
+		cmd = exec.Command("hyper", attachCmd)
+	case "iterm2":
+		// macOS iTerm2
+		script := fmt.Sprintf(`tell application "iTerm2"
+			create window with default profile command "%s"
+		end tell`, attachCmd)
+		cmd = exec.Command("osascript", "-e", script)
+	case "terminal":
+		// macOS Terminal.app
+		script := fmt.Sprintf(`tell application "Terminal"
+			do script "%s"
+			activate
+		end tell`, attachCmd)
+		cmd = exec.Command("osascript", "-e", script)
+	case "wezterm":
+		cmd = exec.Command("wezterm", "start", "--", "bash", "-c", attachCmd)
+	case "xterm":
+		cmd = exec.Command("xterm", "-e", attachCmd)
+	default:
+		return fmt.Errorf("unknown terminal: %s. Set DARK_MULTI_TERMINAL", terminal)
+	}
+
+	return cmd.Start()
+}
+
+// detectTerminal returns the configured or auto-detected terminal.
+func detectTerminal() string {
+	if config.Terminal != "auto" {
+		return config.Terminal
+	}
+
+	// Auto-detect based on what's installed
+	terminals := []string{
+		"kitty", "alacritty", "gnome-terminal", "hyper", "wezterm", "xterm",
+	}
+
+	// macOS defaults
+	if _, err := exec.LookPath("osascript"); err == nil {
+		// Check for iTerm2 first
+		if _, err := os.Stat("/Applications/iTerm.app"); err == nil {
+			return "iterm2"
+		}
+		return "terminal"
+	}
+
+	// Linux: check what's installed
+	for _, t := range terminals {
+		if _, err := exec.LookPath(t); err == nil {
+			return t
+		}
+	}
+
+	return "xterm" // fallback
+}
+
 func execCommand(path string, args ...string) int {
 	cmd := exec.Command(path, args[1:]...)
 	cmd.Stdin = os.Stdin
