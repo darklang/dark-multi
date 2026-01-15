@@ -117,6 +117,38 @@ func (b *Branch) HasChanges() bool {
 	return err == nil && len(strings.TrimSpace(string(out))) > 0
 }
 
+// GitStats returns commits ahead of main and lines added/removed.
+func (b *Branch) GitStats() (commits int, added int, removed int) {
+	if !b.Exists() || b.Name == "main" {
+		return 0, 0, 0
+	}
+
+	// Count commits ahead of main
+	cmd := exec.Command("git", "-C", b.Path, "rev-list", "--count", "main..HEAD")
+	out, err := cmd.Output()
+	if err == nil {
+		fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &commits)
+	}
+
+	// Get diff stats vs main (numstat gives exact counts)
+	cmd = exec.Command("git", "-C", b.Path, "diff", "--numstat", "main...HEAD")
+	out, err = cmd.Output()
+	if err == nil {
+		for _, line := range strings.Split(string(out), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				var a, r int
+				fmt.Sscanf(fields[0], "%d", &a)
+				fmt.Sscanf(fields[1], "%d", &r)
+				added += a
+				removed += r
+			}
+		}
+	}
+
+	return commits, added, removed
+}
+
 // PortBase returns the test port base for this branch.
 func (b *Branch) PortBase() int {
 	return 10011 + b.InstanceID()*100

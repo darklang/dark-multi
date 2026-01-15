@@ -16,6 +16,7 @@ import (
 	"github.com/stachu/dark-multi/internal/dns"
 	"github.com/stachu/dark-multi/internal/proxy"
 	"github.com/stachu/dark-multi/internal/tmux"
+	"github.com/stachu/dark-multi/internal/tui"
 )
 
 // NewRootCmd creates the root cobra command.
@@ -534,57 +535,11 @@ func setupDNSCmd() *cobra.Command {
 }
 
 func cmdAttach(cmd *cobra.Command, args []string) {
-	branches := branch.GetManagedBranches()
-
-	if len(branches) == 0 {
-		cpuCores, ramGB := config.GetSystemResources()
-		suggested := config.SuggestMaxInstances()
-
-		fmt.Println()
-		fmt.Println("No branches found. Let's set up!")
-		fmt.Println()
-		fmt.Printf("System: %d cores, %dGB RAM\n", cpuCores, ramGB)
-		fmt.Printf("Suggested max concurrent: %d\n", suggested)
-		fmt.Println()
-		fmt.Println("To get started:")
-		fmt.Println("  1. Set DARK_SOURCE if your dark repo isn't at ~/code/dark:")
-		fmt.Println("     export DARK_SOURCE=~/code/dark-source")
-		fmt.Println()
-		fmt.Println("  2. Create your first branch:")
-		fmt.Println("     multi new main")
-		fmt.Println()
+	// Launch TUI
+	if err := tui.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "\033[0;31merror:\033[0m %v\n", err)
 		os.Exit(1)
 	}
-
-	// Auto-create tmux windows for running branches
-	var running []*branch.Branch
-	for _, b := range branches {
-		if b.IsRunning() {
-			running = append(running, b)
-		}
-	}
-
-	if len(running) == 0 {
-		fmt.Println("No running branches. Start one first:")
-		fmt.Println("  multi start <branch>")
-		fmt.Println()
-		// Show ls output
-		lsCmd().Run(cmd, args)
-		return
-	}
-
-	// Ensure meta window exists
-	tmux.EnsureMetaWindow()
-
-	for _, b := range running {
-		if !tmux.WindowExists(b.Name) {
-			fmt.Printf("\033[0;34m>\033[0m Creating tmux window for %s...\n", b.Name)
-			containerID, _ := b.ContainerID()
-			tmux.CreateWindow(b.Name, containerID, b.Path)
-		}
-	}
-
-	tmux.AttachExec()
 }
 
 func openVSCode(b *branch.Branch) bool {

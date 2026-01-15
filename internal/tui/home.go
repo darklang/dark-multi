@@ -110,38 +110,36 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "t":
-			// Open tmux in terminal - create windows for running branches if needed
-			hasRunning := false
-			for _, b := range m.branches {
-				if b.IsRunning() {
-					hasRunning = true
-					if !tmux.WindowExists(b.Name) {
-						containerID, _ := b.ContainerID()
-						tmux.CreateWindow(b.Name, containerID, b.Path)
+			// Open selected branch in terminal
+			if len(m.branches) > 0 {
+				b := m.branches[m.cursor]
+				if !b.IsRunning() {
+					m.message = fmt.Sprintf("%s is not running", b.Name)
+					return m, nil
+				}
+				// Create session if needed
+				if !tmux.BranchSessionExists(b.Name) {
+					containerID, _ := b.ContainerID()
+					if err := tmux.CreateBranchSession(b.Name, containerID, b.Path); err != nil {
+						m.message = fmt.Sprintf("Error: %v", err)
+						return m, nil
 					}
 				}
-			}
-			if hasRunning && tmux.SessionExists() {
-				if err := tmux.OpenInTerminal(); err != nil {
+				// Open in terminal
+				if err := tmux.OpenBranchInTerminal(b.Name); err != nil {
 					m.message = fmt.Sprintf("Error: %v", err)
 				} else {
-					m.message = "Opened tmux in terminal"
+					m.message = fmt.Sprintf("Opened %s in terminal", b.Name)
 				}
 				return m, nil
 			}
-			m.message = "No running branches to attach to."
 
 		case "s":
 			// Start selected branch
 			if len(m.branches) > 0 {
 				b := m.branches[m.cursor]
 				if b.IsRunning() {
-					// Already running - but ensure tmux window exists
-					if !tmux.WindowExists(b.Name) {
-						m.message = fmt.Sprintf("Creating tmux window for %s...", b.Name)
-						return m, m.ensureTmuxWindow(b)
-					}
-					m.message = fmt.Sprintf("%s is already running", b.Name)
+					m.message = fmt.Sprintf("%s is already running. Press 't' to open terminal.", b.Name)
 				} else {
 					m.loading = true
 					m.message = fmt.Sprintf("Starting %s...", b.Name)
@@ -283,24 +281,26 @@ func (m HomeModel) View() string {
 				name = selectedStyle.Render(name)
 			}
 
-			// Status indicators (compact)
-			var indicators []string
-			if br.HasChanges() {
-				indicators = append(indicators, modifiedStyle.Render("*"))
+			// Git stats (commits, +/- vs main)
+			var stats string
+			commits, added, removed := br.GitStats()
+			if commits > 0 || added > 0 || removed > 0 {
+				stats = fmt.Sprintf(" %dc +%d -%d", commits, added, removed)
+				stats = modifiedStyle.Render(stats)
 			}
+
+			// Claude status
+			claudeIndicator := ""
 			if cs, ok := m.claudeStatus[br.Name]; ok && cs != nil {
 				switch cs.State {
 				case "waiting":
-					indicators = append(indicators, "⏳")
+					claudeIndicator = " ⏳"
 				case "working":
-					indicators = append(indicators, runningStyle.Render("⚡"))
+					claudeIndicator = runningStyle.Render(" ⚡")
 				}
 			}
 
-			suffix := ""
-			if len(indicators) > 0 {
-				suffix = " " + strings.Join(indicators, " ")
-			}
+			suffix := stats + claudeIndicator
 
 			b.WriteString(fmt.Sprintf("%s%s %s%s\n", cursor, indicator, name, suffix))
 		}
@@ -361,19 +361,6 @@ func (m HomeModel) stopBranch(b *branch.Branch) tea.Cmd {
 			return operationErrMsg{err}
 		}
 		return operationDoneMsg{fmt.Sprintf("Stopped %s", b.Name)}
-	}
-}
-
-func (m HomeModel) ensureTmuxWindow(b *branch.Branch) tea.Cmd {
-	return func() tea.Msg {
-		containerID, err := b.ContainerID()
-		if err != nil || containerID == "" {
-			return operationErrMsg{fmt.Errorf("couldn't get container ID for %s", b.Name)}
-		}
-		if err := tmux.CreateWindow(b.Name, containerID, b.Path); err != nil {
-			return operationErrMsg{err}
-		}
-		return operationDoneMsg{fmt.Sprintf("Created tmux window for %s", b.Name)}
 	}
 }
 

@@ -17,222 +17,113 @@ func IsAvailable() bool {
 	return err == nil
 }
 
-// SessionExists returns true if the dark tmux session exists.
-func SessionExists() bool {
+// BranchSessionName returns the tmux session name for a branch.
+func BranchSessionName(branchName string) string {
+	return fmt.Sprintf("dark-%s", branchName)
+}
+
+// BranchSessionExists returns true if the branch's tmux session exists.
+func BranchSessionExists(branchName string) bool {
 	if !IsAvailable() {
 		return false
 	}
-	cmd := exec.Command("tmux", "has-session", "-t", config.TmuxSession)
+	session := BranchSessionName(branchName)
+	cmd := exec.Command("tmux", "has-session", "-t", session)
 	return cmd.Run() == nil
 }
 
-// WindowExists returns true if a window with the given name exists.
-func WindowExists(name string) bool {
-	if !SessionExists() {
-		return false
-	}
-	cmd := exec.Command("tmux", "list-windows", "-t", config.TmuxSession, "-F", "#{window_name}")
-	out, err := cmd.Output()
-	if err != nil {
-		return false
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if strings.TrimSpace(line) == name {
-			return true
-		}
-	}
-	return false
-}
-
-// CreateWindow creates a tmux window with CLI + claude panes.
-func CreateWindow(name string, containerID string, branchPath string) error {
+// CreateBranchSession creates a tmux session for a branch with CLI + claude panes.
+func CreateBranchSession(branchName string, containerID string, branchPath string) error {
 	if !IsAvailable() {
 		return fmt.Errorf("tmux not available")
 	}
 
-	if !SessionExists() {
-		// Create session with first window
-		cmd := exec.Command("tmux", "new-session", "-d", "-s", config.TmuxSession, "-n", name)
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to create session: %w", err)
-		}
-	} else {
-		// Kill existing window if present
-		if WindowExists(name) {
-			exec.Command("tmux", "kill-window", "-t", fmt.Sprintf("%s:%s", config.TmuxSession, name)).Run()
-		}
-		// Create new window
-		cmd := exec.Command("tmux", "new-window", "-a", "-t", config.TmuxSession, "-n", name)
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to create window: %w", err)
-		}
+	session := BranchSessionName(branchName)
+
+	// Kill existing session if present
+	if BranchSessionExists(branchName) {
+		exec.Command("tmux", "kill-session", "-t", session).Run()
 	}
 
+	// Create new session
+	cmd := exec.Command("tmux", "new-session", "-d", "-s", session)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to create session: %w", err)
+	}
+
+	// Enable mouse support
+	exec.Command("tmux", "set-option", "-t", session, "-g", "mouse", "on").Run()
+
 	// Left pane: CLI inside container
-	exec.Command("tmux", "send-keys", "-t", fmt.Sprintf("%s:%s", config.TmuxSession, name),
+	exec.Command("tmux", "send-keys", "-t", session,
 		fmt.Sprintf("docker exec -it -w /home/dark/app %s bash", containerID), "Enter").Run()
 
 	// Split and create right pane: claude on host
-	exec.Command("tmux", "split-window", "-h", "-t", fmt.Sprintf("%s:%s", config.TmuxSession, name)).Run()
+	exec.Command("tmux", "split-window", "-h", "-t", session).Run()
 
 	workspace := branchPath
 	if workspace == "" {
-		workspace = filepath.Join(config.DarkRoot, name)
+		workspace = filepath.Join(config.DarkRoot, branchName)
 	}
-	exec.Command("tmux", "send-keys", "-t", fmt.Sprintf("%s:%s.1", config.TmuxSession, name),
+	exec.Command("tmux", "send-keys", "-t", fmt.Sprintf("%s.1", session),
 		fmt.Sprintf("cd %s && claude", workspace), "Enter").Run()
 
 	// Select left pane (CLI)
-	exec.Command("tmux", "select-pane", "-t", fmt.Sprintf("%s:%s.0", config.TmuxSession, name)).Run()
+	exec.Command("tmux", "select-pane", "-t", fmt.Sprintf("%s.0", session)).Run()
 
 	return nil
 }
 
-// KillWindow kills a tmux window.
-func KillWindow(name string) error {
-	if WindowExists(name) {
-		return exec.Command("tmux", "kill-window", "-t", fmt.Sprintf("%s:%s", config.TmuxSession, name)).Run()
+// KillBranchSession kills a branch's tmux session.
+func KillBranchSession(branchName string) error {
+	if BranchSessionExists(branchName) {
+		session := BranchSessionName(branchName)
+		return exec.Command("tmux", "kill-session", "-t", session).Run()
 	}
 	return nil
 }
 
-// EnsureMetaWindow creates the dark-meta control plane window if it doesn't exist.
-func EnsureMetaWindow() error {
-	if WindowExists("dark-meta") {
-		return nil
-	}
-
-	if !SessionExists() {
-		// Create session with meta window
-		cmd := exec.Command("tmux", "new-session", "-d", "-s", config.TmuxSession, "-n", "dark-meta")
-		if err := cmd.Run(); err != nil {
-			return err
-		}
-		// Enable mouse support
-		exec.Command("tmux", "set-option", "-t", config.TmuxSession, "-g", "mouse", "on").Run()
-	} else {
-		exec.Command("tmux", "new-window", "-t", config.TmuxSession, "-n", "dark-meta").Run()
-	}
-
-	// Move meta window to be first (index 0)
-	exec.Command("tmux", "move-window", "-t", fmt.Sprintf("%s:dark-meta", config.TmuxSession),
-		"-t", fmt.Sprintf("%s:0", config.TmuxSession)).Run()
-
-	// Left pane (70%): claude in dark-multi directory
-	darkMultiDir := filepath.Join(config.DarkRoot, "..", "dark-multi")
-	exec.Command("tmux", "send-keys", "-t", fmt.Sprintf("%s:dark-meta", config.TmuxSession),
-		fmt.Sprintf("cd %s && claude", darkMultiDir), "Enter").Run()
-
-	// Right pane (30%): quick reference
-	exec.Command("tmux", "split-window", "-h", "-p", "30", "-t", fmt.Sprintf("%s:dark-meta", config.TmuxSession)).Run()
-
-	// Quick reference content
-	refText := `echo -e "
-\033[1m=== DARK MULTI ===\033[0m
-
-\033[1mBranch commands:\033[0m
-  multi ls          - list branches
-  multi new <name>  - create branch
-  multi stop <name> - stop branch
-  multi rm <name>   - remove branch
-  multi code <name> - open VS Code
-
-\033[1mtmux:\033[0m
-  Ctrl-b n/p  - next/prev window
-  Ctrl-b w    - list windows
-  Ctrl-b o    - switch pane
-  Ctrl-b z    - zoom pane
-  Ctrl-b d    - detach
-
-\033[1mWindows:\033[0m
-  dark-meta   - this control plane
-  <branch>    - CLI | claude
-"`
-	exec.Command("tmux", "send-keys", "-t", fmt.Sprintf("%s:dark-meta.1", config.TmuxSession), refText, "Enter").Run()
-
-	// Select the claude pane
-	exec.Command("tmux", "select-pane", "-t", fmt.Sprintf("%s:dark-meta.0", config.TmuxSession)).Run()
-
-	return nil
-}
-
-// Attach attaches to the tmux session, replacing the current process.
-func Attach() error {
-	if !IsAvailable() {
-		return fmt.Errorf("tmux not installed")
-	}
-	if !SessionExists() {
-		return fmt.Errorf("no tmux session")
-	}
-	return Exec("tmux", "attach", "-t", config.TmuxSession)
-}
-
-// Exec replaces the current process with the given command.
-func Exec(name string, args ...string) error {
-	path, err := exec.LookPath(name)
-	if err != nil {
-		return err
-	}
-	argv := append([]string{name}, args...)
-	return exec.Command(path, argv[1:]...).Run()
-}
-
-// AttachExec attaches to tmux by replacing the current process.
-func AttachExec() {
-	if !IsAvailable() {
-		fmt.Fprintln(os.Stderr, "error: tmux not installed")
-		os.Exit(1)
-	}
-	if !SessionExists() {
-		fmt.Fprintln(os.Stderr, "error: no tmux session. Start a branch first: multi start <branch>")
-		os.Exit(1)
-	}
-
-	path, _ := exec.LookPath("tmux")
-	// Use syscall.Exec to replace the process
-	os.Exit(execCommand(path, "tmux", "attach", "-t", config.TmuxSession))
-}
-
-// HasAttachedClients returns true if tmux session has clients attached.
-func HasAttachedClients() bool {
-	if !SessionExists() {
+// BranchHasAttachedClients returns true if branch's session has clients attached.
+func BranchHasAttachedClients(branchName string) bool {
+	if !BranchSessionExists(branchName) {
 		return false
 	}
-	out, err := exec.Command("tmux", "list-clients", "-t", config.TmuxSession).Output()
+	session := BranchSessionName(branchName)
+	out, err := exec.Command("tmux", "list-clients", "-t", session).Output()
 	if err != nil {
 		return false
 	}
 	return len(strings.TrimSpace(string(out))) > 0
 }
 
-// OpenInTerminal opens tmux in a terminal window.
+// OpenBranchInTerminal opens a branch's tmux session in a terminal window.
 // If already attached somewhere, tries to focus that window.
 // Otherwise spawns a new terminal.
-func OpenInTerminal() error {
-	if !SessionExists() {
-		return fmt.Errorf("no tmux session")
+func OpenBranchInTerminal(branchName string) error {
+	if !BranchSessionExists(branchName) {
+		return fmt.Errorf("no tmux session for %s", branchName)
 	}
 
+	session := BranchSessionName(branchName)
+
 	// If already attached, try to focus the existing window
-	if HasAttachedClients() {
-		if focusExistingTerminal() {
+	if BranchHasAttachedClients(branchName) {
+		if focusTerminalByTitle(session) {
 			return nil
 		}
 		// Couldn't focus, will spawn new terminal anyway
 	}
 
-	return spawnTerminal()
+	return spawnTerminalForSession(session)
 }
 
-// focusExistingTerminal tries to focus a terminal window with tmux.
-func focusExistingTerminal() bool {
+// focusTerminalByTitle tries to focus a terminal window by title.
+func focusTerminalByTitle(title string) bool {
 	// Try xdotool (Linux)
 	if _, err := exec.LookPath("xdotool"); err == nil {
-		// Search for window with tmux session name
-		cmd := exec.Command("xdotool", "search", "--name", config.TmuxSession)
+		cmd := exec.Command("xdotool", "search", "--name", title)
 		out, err := cmd.Output()
 		if err == nil && len(strings.TrimSpace(string(out))) > 0 {
-			// Get first window ID
 			windowID := strings.Split(strings.TrimSpace(string(out)), "\n")[0]
 			exec.Command("xdotool", "windowactivate", windowID).Run()
 			return true
@@ -241,45 +132,41 @@ func focusExistingTerminal() bool {
 
 	// Try wmctrl (Linux)
 	if _, err := exec.LookPath("wmctrl"); err == nil {
-		// Activate window with tmux in title
-		if exec.Command("wmctrl", "-a", config.TmuxSession).Run() == nil {
+		if exec.Command("wmctrl", "-a", title).Run() == nil {
 			return true
 		}
 	}
 
-	// macOS: try osascript
+	// macOS: try osascript (less reliable for specific windows)
 	if _, err := exec.LookPath("osascript"); err == nil {
 		script := `tell application "System Events" to set frontmost of (first process whose name contains "Terminal" or name contains "iTerm") to true`
 		exec.Command("osascript", "-e", script).Run()
-		// Can't reliably verify success on macOS
 	}
 
 	return false
 }
 
-// spawnTerminal spawns a new terminal window with tmux attach.
-func spawnTerminal() error {
+// spawnTerminalForSession spawns a new terminal window attached to a tmux session.
+func spawnTerminalForSession(session string) error {
 	terminal := detectTerminal()
-	attachCmd := fmt.Sprintf("tmux attach -t %s", config.TmuxSession)
+	attachCmd := fmt.Sprintf("tmux attach -t %s", session)
 
 	var cmd *exec.Cmd
 	switch terminal {
 	case "gnome-terminal":
-		cmd = exec.Command("gnome-terminal", "--", "bash", "-c", attachCmd)
+		cmd = exec.Command("gnome-terminal", "--title", session, "--", "bash", "-c", attachCmd)
 	case "kitty":
-		cmd = exec.Command("kitty", "bash", "-c", attachCmd)
+		cmd = exec.Command("kitty", "--title", session, "bash", "-c", attachCmd)
 	case "alacritty":
-		cmd = exec.Command("alacritty", "-e", "bash", "-c", attachCmd)
+		cmd = exec.Command("alacritty", "--title", session, "-e", "bash", "-c", attachCmd)
 	case "hyper":
 		cmd = exec.Command("hyper", attachCmd)
 	case "iterm2":
-		// macOS iTerm2
 		script := fmt.Sprintf(`tell application "iTerm2"
 			create window with default profile command "%s"
 		end tell`, attachCmd)
 		cmd = exec.Command("osascript", "-e", script)
 	case "terminal":
-		// macOS Terminal.app
 		script := fmt.Sprintf(`tell application "Terminal"
 			do script "%s"
 			activate
@@ -288,7 +175,7 @@ func spawnTerminal() error {
 	case "wezterm":
 		cmd = exec.Command("wezterm", "start", "--", "bash", "-c", attachCmd)
 	case "xterm":
-		cmd = exec.Command("xterm", "-e", attachCmd)
+		cmd = exec.Command("xterm", "-title", session, "-e", attachCmd)
 	default:
 		return fmt.Errorf("unknown terminal: %s. Set DARK_MULTI_TERMINAL", terminal)
 	}
@@ -302,14 +189,12 @@ func detectTerminal() string {
 		return config.Terminal
 	}
 
-	// Auto-detect based on what's installed
 	terminals := []string{
 		"kitty", "alacritty", "gnome-terminal", "hyper", "wezterm", "xterm",
 	}
 
 	// macOS defaults
 	if _, err := exec.LookPath("osascript"); err == nil {
-		// Check for iTerm2 first
 		if _, err := os.Stat("/Applications/iTerm.app"); err == nil {
 			return "iterm2"
 		}
@@ -323,16 +208,37 @@ func detectTerminal() string {
 		}
 	}
 
-	return "xterm" // fallback
+	return "xterm"
 }
 
-func execCommand(path string, args ...string) int {
-	cmd := exec.Command(path, args[1:]...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return 1
+// Legacy compatibility - these wrap the new per-branch functions
+
+// SessionExists returns true if any dark session exists (legacy).
+func SessionExists() bool {
+	// Check for any dark-* session
+	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
+	if err != nil {
+		return false
 	}
-	return 0
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(line, "dark-") {
+			return true
+		}
+	}
+	return false
+}
+
+// WindowExists is deprecated - use BranchSessionExists instead.
+func WindowExists(name string) bool {
+	return BranchSessionExists(name)
+}
+
+// CreateWindow is deprecated - use CreateBranchSession instead.
+func CreateWindow(name string, containerID string, branchPath string) error {
+	return CreateBranchSession(name, containerID, branchPath)
+}
+
+// KillWindow is deprecated - use KillBranchSession instead.
+func KillWindow(name string) error {
+	return KillBranchSession(name)
 }
