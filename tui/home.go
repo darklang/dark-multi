@@ -32,24 +32,31 @@ type GitStatsInfo struct {
 	Removed int
 }
 
+// PendingBranch tracks a branch being created.
+type PendingBranch struct {
+	Name   string
+	Status string // "cloning", "starting", etc.
+}
+
 // HomeModel is the main TUI model.
 type HomeModel struct {
-	branches      []*branch.Branch
-	claudeStatus  map[string]*claude.Status
-	gitStats      map[string]*GitStatsInfo
-	startupStatus map[string]*branch.StartupStatus
-	cursor        int
-	proxyRunning  bool
-	apiKeyMissing bool
-	width         int
-	height        int
-	message       string
-	err           error
-	quitting      bool
-	loading       bool
-	inputMode     InputMode
-	inputText     string
-	spinner       spinner.Model
+	branches       []*branch.Branch
+	pendingBranches map[string]*PendingBranch // branches being created
+	claudeStatus   map[string]*claude.Status
+	gitStats       map[string]*GitStatsInfo
+	startupStatus  map[string]*branch.StartupStatus
+	cursor         int
+	proxyRunning   bool
+	apiKeyMissing  bool
+	width          int
+	height         int
+	message        string
+	err            error
+	quitting       bool
+	loading        bool
+	inputMode      InputMode
+	inputText      string
+	spinner        spinner.Model
 }
 
 // Messages
@@ -77,9 +84,10 @@ func NewHomeModel() HomeModel {
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 	return HomeModel{
-		loading:       true,
-		spinner:       s,
-		apiKeyMissing: config.GetAnthropicAPIKey() == "",
+		loading:         true,
+		spinner:         s,
+		apiKeyMissing:   config.GetAnthropicAPIKey() == "",
+		pendingBranches: make(map[string]*PendingBranch),
 	}
 }
 
@@ -327,11 +335,13 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case createStepMsg:
 		if msg.step == 1 {
 			// Clone done, now start
-			m.message = fmt.Sprintf("Starting container for %s...", msg.name)
+			if pending, ok := m.pendingBranches[msg.name]; ok {
+				pending.Status = "starting container"
+			}
 			return m, startBranchStep(msg.branch, msg.name)
 		}
 		// Step 2: all done
-		m.message = fmt.Sprintf("Created and started %s", msg.name)
+		delete(m.pendingBranches, msg.name)
 		m.loading = false
 		return m, tea.Batch(loadBranches, checkProxyStatus)
 
@@ -341,6 +351,10 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(loadBranches, checkProxyStatus)
 
 	case operationErrMsg:
+		// Remove from pending on error
+		for name := range m.pendingBranches {
+			delete(m.pendingBranches, name)
+		}
 		m.err = msg.err
 		m.loading = false
 		return m, nil
@@ -384,16 +398,21 @@ func (m HomeModel) View() string {
 		b.WriteString("\n\n")
 	}
 
-	// Branches
-	if len(m.branches) == 0 {
+	// Branches (including pending ones)
+	if len(m.branches) == 0 && len(m.pendingBranches) == 0 {
 		b.WriteString(stoppedStyle.Render("  No branches yet. Press 'n' to create one."))
 		b.WriteString("\n")
 	} else {
-		// Find max branch name length for alignment
+		// Find max branch name length for alignment (including pending)
 		maxLen := 0
 		for _, br := range m.branches {
 			if len(br.Name) > maxLen {
 				maxLen = len(br.Name)
+			}
+		}
+		for _, pb := range m.pendingBranches {
+			if len(pb.Name) > maxLen {
+				maxLen = len(pb.Name)
 			}
 		}
 
@@ -461,6 +480,25 @@ func (m HomeModel) View() string {
 			suffix := startupInfo + stats + claudeIndicator
 
 			b.WriteString(fmt.Sprintf("%s%s %s%s\n", cursor, indicator, name, suffix))
+		}
+
+		// Show pending branches (being created)
+		for _, pb := range m.pendingBranches {
+			// Check if already in branches list (avoid duplicates)
+			found := false
+			for _, br := range m.branches {
+				if br.Name == pb.Name {
+					found = true
+					break
+				}
+			}
+			if found {
+				continue
+			}
+			indicator := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("◐")
+			name := fmt.Sprintf("%-*s", maxLen, pb.Name)
+			status := " " + helpStyle.Render(pb.Status)
+			b.WriteString(fmt.Sprintf("  %s %s%s %s\n", indicator, name, status, m.spinner.View()))
 		}
 	}
 
@@ -602,12 +640,12 @@ func (m HomeModel) handleInputMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.inputMode = InputNone
 			m.inputText = ""
 			m.loading = true
-			// Check if branch already exists
+			// Check if branch already exists and set initial status
 			b := branch.New(name)
 			if b.Exists() {
-				m.message = fmt.Sprintf("Starting %s...", name)
+				m.pendingBranches[name] = &PendingBranch{Name: name, Status: "starting container"}
 			} else {
-				m.message = fmt.Sprintf("Cloning %s from GitHub...", name)
+				m.pendingBranches[name] = &PendingBranch{Name: name, Status: "cloning from GitHub"}
 			}
 			return m, m.createAndStartBranch(name)
 

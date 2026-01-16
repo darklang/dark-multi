@@ -12,6 +12,7 @@ import (
 
 	"github.com/darklang/dark-multi/branch"
 	"github.com/darklang/dark-multi/config"
+	"github.com/darklang/dark-multi/tmux"
 )
 
 // BranchDetailModel shows details for a single branch.
@@ -151,11 +152,26 @@ func (m BranchDetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.message = "Opening VS Code..."
 
 		case "t":
-			// Attach to tmux
-			return m, tea.Sequence(
-				tea.ExitAltScreen,
-				func() tea.Msg { return attachTmuxMsg{} },
-			)
+			// Open tmux in separate terminal window
+			if !m.branch.IsRunning() {
+				m.message = "Branch not running"
+				return m, nil
+			}
+			// Create session if needed
+			if !tmux.BranchSessionExists(m.branch.Name) {
+				containerID, _ := m.branch.ContainerID()
+				if err := tmux.CreateBranchSession(m.branch.Name, containerID, m.branch.Path); err != nil {
+					m.message = fmt.Sprintf("Error: %v", err)
+					return m, nil
+				}
+			}
+			// Open in terminal
+			if err := tmux.OpenBranchInTerminal(m.branch.Name); err != nil {
+				m.message = fmt.Sprintf("Error: %v", err)
+			} else {
+				m.message = "Opened terminal"
+			}
+			return m, nil
 
 		case "s":
 			// Start branch

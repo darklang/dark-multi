@@ -53,14 +53,20 @@ func CreateBranchSession(branchName string, containerID string, branchPath strin
 	// Enable mouse support
 	exec.Command("tmux", "set-option", "-t", session, "-g", "mouse", "on").Run()
 
+	// Build docker exec command with API key if available
+	dockerExec := fmt.Sprintf("docker exec -it -w /home/dark/app %s", containerID)
+	if apiKey := config.GetAnthropicAPIKey(); apiKey != "" {
+		dockerExec = fmt.Sprintf("docker exec -it -w /home/dark/app -e ANTHROPIC_API_KEY=%s %s", apiKey, containerID)
+	}
+
 	// Left pane: CLI inside container
 	exec.Command("tmux", "send-keys", "-t", session,
-		fmt.Sprintf("docker exec -it -w /home/dark/app %s bash", containerID), "Enter").Run()
+		fmt.Sprintf("%s bash", dockerExec), "Enter").Run()
 
 	// Split and create right pane: claude inside container (--resume picks up last session)
 	exec.Command("tmux", "split-window", "-h", "-t", session).Run()
 	exec.Command("tmux", "send-keys", "-t", fmt.Sprintf("%s.1", session),
-		fmt.Sprintf("docker exec -it -w /home/dark/app %s claude --resume", containerID), "Enter").Run()
+		fmt.Sprintf("%s claude --resume", dockerExec), "Enter").Run()
 
 	// Select left pane (CLI)
 	exec.Command("tmux", "select-pane", "-t", fmt.Sprintf("%s.0", session)).Run()
