@@ -105,6 +105,11 @@ func loadBranches() tea.Msg {
 
 func checkProxyStatus() tea.Msg {
 	_, running := proxy.IsRunning()
+	if !running {
+		// Auto-start proxy
+		proxy.Start(config.ProxyPort, true)
+		_, running = proxy.IsRunning()
+	}
 	return proxyStatusMsg(running)
 }
 
@@ -253,16 +258,6 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.branches) > 0 {
 				b := m.branches[m.cursor]
 				return m, m.openCode(b)
-			}
-
-		case "p":
-			// Toggle proxy
-			if m.proxyRunning {
-				m.message = "Stopping proxy..."
-				return m, m.stopProxy()
-			} else {
-				m.message = "Starting proxy..."
-				return m, m.startProxy()
 			}
 
 		case "g":
@@ -576,7 +571,7 @@ func (m HomeModel) View() string {
 	}
 
 	// Help
-	b.WriteString(helpStyle.Render("[n]ew  [x]del  [s]tart  [k]ill  [a]uth  [d]iff  [g]rid  [t]mux  [c]ode  [p]roxy  [?]  [q]uit"))
+	b.WriteString(helpStyle.Render("[n]ew  [x]del  [s]tart  [k]ill  [a]uth  [d]iff  [g]rid  [t]mux  [c]ode  [?]  [q]uit"))
 	b.WriteString("\n")
 
 	return b.String()

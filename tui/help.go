@@ -92,7 +92,6 @@ func (m HelpModel) View() string {
 
 	b.WriteString(sectionStyle.Render("System"))
 	b.WriteString("\n")
-	b.WriteString("  p           Toggle proxy server\n")
 	b.WriteString("  ?           Help\n")
 	b.WriteString("  q           Quit\n")
 	b.WriteString("\n")
