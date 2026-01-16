@@ -37,8 +37,10 @@ type HomeModel struct {
 	branches      []*branch.Branch
 	claudeStatus  map[string]*claude.Status
 	gitStats      map[string]*GitStatsInfo
+	startupStatus map[string]*branch.StartupStatus
 	cursor        int
 	proxyRunning  bool
+	apiKeyMissing bool
 	width         int
 	height        int
 	message       string
@@ -55,6 +57,7 @@ type branchesLoadedMsg []*branch.Branch
 type proxyStatusMsg bool
 type claudeStatusMsg map[string]*claude.Status
 type gitStatsMsg map[string]*GitStatsInfo
+type startupStatusMsg map[string]*branch.StartupStatus
 type tickMsg time.Time
 type operationDoneMsg struct{ message string }
 type operationErrMsg struct{ err error }
@@ -74,8 +77,9 @@ func NewHomeModel() HomeModel {
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 	return HomeModel{
-		loading: true,
-		spinner: s,
+		loading:       true,
+		spinner:       s,
+		apiKeyMissing: config.GetAnthropicAPIKey() == "",
 	}
 }
 
@@ -123,8 +127,21 @@ func loadGitStats(branches []*branch.Branch) tea.Cmd {
 	}
 }
 
+func loadStartupStatus(branches []*branch.Branch) tea.Cmd {
+	return func() tea.Msg {
+		statuses := make(map[string]*branch.StartupStatus)
+		for _, b := range branches {
+			if b.IsRunning() {
+				status := b.GetStartupStatus()
+				statuses[b.Name] = &status
+			}
+		}
+		return startupStatusMsg(statuses)
+	}
+}
+
 func tickCmd() tea.Cmd {
-	return tea.Tick(5*time.Second, func(t time.Time) tea.Msg {
+	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
 }
@@ -242,11 +259,6 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.startProxy()
 			}
 
-		case "r":
-			// Refresh
-			m.loading = true
-			return m, loadBranches
-
 		case "g":
 			// Grid view - show all Claude sessions
 			grid := NewGridModel(m.branches)
@@ -259,7 +271,14 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.message = ""
 			return m, nil
 
-		case "d", "x":
+		case "d":
+			// Open diff view (gitk)
+			if len(m.branches) > 0 {
+				b := m.branches[m.cursor]
+				return m, m.openDiff(b)
+			}
+
+		case "x":
 			// Delete branch - enter confirmation mode
 			if len(m.branches) > 0 {
 				m.inputMode = InputConfirmDelete
@@ -278,8 +297,8 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.cursor >= len(m.branches) {
 			m.cursor = max(0, len(m.branches)-1)
 		}
-		// Load Claude status and git stats after branches load
-		return m, tea.Batch(loadClaudeStatus(m.branches), loadGitStats(m.branches))
+		// Load Claude status, git stats, and startup status after branches load
+		return m, tea.Batch(loadClaudeStatus(m.branches), loadGitStats(m.branches), loadStartupStatus(m.branches))
 
 	case proxyStatusMsg:
 		m.proxyRunning = bool(msg)
@@ -293,9 +312,13 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.gitStats = msg
 		return m, nil
 
+	case startupStatusMsg:
+		m.startupStatus = msg
+		return m, nil
+
 	case tickMsg:
-		// Periodic refresh of Claude status and git stats
-		return m, tea.Batch(loadClaudeStatus(m.branches), loadGitStats(m.branches), tickCmd())
+		// Periodic refresh of Claude status, git stats, and startup status
+		return m, tea.Batch(loadClaudeStatus(m.branches), loadGitStats(m.branches), loadStartupStatus(m.branches), tickCmd())
 
 	case progressMsg:
 		m.message = msg.message
@@ -353,6 +376,14 @@ func (m HomeModel) View() string {
 	b.WriteString(titleStyle.Render("DARK MULTI"))
 	b.WriteString("\n\n")
 
+	// API key warning
+	if m.apiKeyMissing {
+		b.WriteString(errorStyle.Render("⚠ ANTHROPIC_API_KEY not set - Claude won't work in containers"))
+		b.WriteString("\n")
+		b.WriteString(helpStyle.Render("  Set env var or create ~/.config/dark-multi/anthropic-api-key"))
+		b.WriteString("\n\n")
+	}
+
 	// Branches
 	if len(m.branches) == 0 {
 		b.WriteString(stoppedStyle.Render("  No branches yet. Press 'n' to create one."))
@@ -372,10 +403,17 @@ func (m HomeModel) View() string {
 				cursor = "> "
 			}
 
-			// Running indicator
+			// Running indicator with startup status
 			indicator := stoppedStyle.Render("○")
+			startupInfo := ""
 			if br.IsRunning() {
-				indicator = runningStyle.Render("●")
+				if ss, ok := m.startupStatus[br.Name]; ok && ss != nil && ss.Phase != branch.PhaseReady {
+					// Show startup progress
+					indicator = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("◐") // orange half
+					startupInfo = " " + helpStyle.Render(ss.Progress()+" "+ss.Description)
+				} else {
+					indicator = runningStyle.Render("●")
+				}
 			}
 
 			// Branch name (padded, then styled if selected)
@@ -420,7 +458,7 @@ func (m HomeModel) View() string {
 				}
 			}
 
-			suffix := stats + claudeIndicator
+			suffix := startupInfo + stats + claudeIndicator
 
 			b.WriteString(fmt.Sprintf("%s%s %s%s\n", cursor, indicator, name, suffix))
 		}
@@ -485,7 +523,7 @@ func (m HomeModel) View() string {
 	}
 
 	// Help
-	b.WriteString(helpStyle.Render("[n]ew  [d]el  [s]tart  [k]ill  [g]rid  [t]mux  [c]ode  [p]roxy  [?]  [q]uit"))
+	b.WriteString(helpStyle.Render("[n]ew  [x]del  [s]tart  [k]ill  [d]iff  [g]rid  [t]mux  [c]ode  [p]roxy  [?]  [q]uit"))
 	b.WriteString("\n")
 
 	return b.String()
@@ -538,6 +576,15 @@ func (m HomeModel) stopProxy() tea.Cmd {
 			return operationErrMsg{fmt.Errorf("failed to stop proxy")}
 		}
 		return operationDoneMsg{"Proxy stopped"}
+	}
+}
+
+func (m HomeModel) openDiff(b *branch.Branch) tea.Cmd {
+	return func() tea.Msg {
+		if err := openGitDiff(b); err != nil {
+			return operationErrMsg{err}
+		}
+		return operationDoneMsg{""}
 	}
 }
 

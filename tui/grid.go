@@ -14,14 +14,12 @@ import (
 
 var (
 	cellBorderStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("241")).
-			Padding(0, 1)
+			Border(lipgloss.NormalBorder()).
+			BorderForeground(lipgloss.Color("241"))
 
 	cellSelectedStyle = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("212")).
-				Padding(0, 1)
+				Border(lipgloss.NormalBorder()).
+				BorderForeground(lipgloss.Color("212"))
 
 	cellHeaderStyle = lipgloss.NewStyle().
 			Bold(true).
@@ -111,7 +109,7 @@ func (m GridModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "enter":
-			// Focus on selected branch - attach to tmux session
+			// Focus on selected branch - open in separate terminal window
 			if len(m.branches) > 0 && m.cursor < len(m.branches) {
 				b := m.branches[m.cursor]
 				if b.IsRunning() {
@@ -120,12 +118,10 @@ func (m GridModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						containerID, _ := b.ContainerID()
 						tmux.CreateBranchSession(b.Name, containerID, b.Path)
 					}
-					// Use tea.Exec to attach to tmux
-					cmd := tmux.AttachCommand(b.Name)
-					return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
-						// When tmux detaches, return to grid and refresh
-						return gridTickMsg(time.Now())
-					})
+					// Open in separate terminal window
+					if err := tmux.OpenBranchInTerminal(b.Name); err != nil {
+						m.message = fmt.Sprintf("Error: %v", err)
+					}
 				} else {
 					m.message = fmt.Sprintf("%s is stopped - press 's' to start", b.Name)
 				}
@@ -187,66 +183,66 @@ func (m GridModel) numCols() int {
 func (m GridModel) View() string {
 	var b strings.Builder
 
-	b.WriteString(titleStyle.Render("DARK MULTI - Grid View"))
-	b.WriteString("\n\n")
-
 	if len(m.branches) == 0 {
-		b.WriteString(stoppedStyle.Render("  No branches. Press 'esc' to go back and create one."))
+		b.WriteString(stoppedStyle.Render("No branches. Press 'esc' to go back and create one."))
 		b.WriteString("\n")
-	} else {
-		// Calculate cell dimensions
-		cols := m.numCols()
-		cellWidth := (m.width - 4) / cols
-		if cellWidth < 30 {
-			cellWidth = 30
-		}
-		if cellWidth > 60 {
-			cellWidth = 60
-		}
-		cellHeight := (m.height - 8) / 2
-		if cellHeight < 6 {
-			cellHeight = 6
-		}
-		if cellHeight > 15 {
-			cellHeight = 15
-		}
-
-		// Build rows (2 rows)
-		var rows []string
-		for row := 0; row < 2; row++ {
-			var cells []string
-			for col := 0; col < cols; col++ {
-				idx := row*cols + col
-				cell := m.renderCell(idx, cellWidth, cellHeight)
-				cells = append(cells, cell)
-			}
-			rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, cells...))
-		}
-
-		b.WriteString(lipgloss.JoinVertical(lipgloss.Left, rows...))
-		b.WriteString("\n")
+		return b.String()
 	}
 
-	// Message
+	// Calculate cell dimensions - maximize screen usage
+	cols := m.numCols()
+
+	// Use sensible defaults if window size not yet known
+	width := m.width
+	if width < 40 {
+		width = 120 // reasonable default
+	}
+	height := m.height
+	if height < 10 {
+		height = 40 // reasonable default
+	}
+
+	// 2 rows, 1 line for help
+	cellHeight := (height - 1) / 2
+
+	// Build rows (2 rows)
+	var rows []string
+	for row := 0; row < 2; row++ {
+		var cells []string
+		remainingWidth := width
+		for col := 0; col < cols; col++ {
+			idx := row*cols + col
+			// Last column gets remaining width to avoid gaps
+			cellWidth := remainingWidth / (cols - col)
+			remainingWidth -= cellWidth
+			cell := m.renderCell(idx, cellWidth, cellHeight)
+			cells = append(cells, cell)
+		}
+		rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, cells...))
+	}
+
+	b.WriteString(lipgloss.JoinVertical(lipgloss.Left, rows...))
+
+	// Message or help on last line
 	if m.message != "" {
-		b.WriteString("\n")
 		b.WriteString(m.message)
+	} else {
+		b.WriteString(helpStyle.Render("←↑↓→:nav  enter:focus  s:start  esc:back"))
 	}
-
-	// Help
-	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("arrows: navigate | enter: focus | s: start | esc: back"))
-	b.WriteString("\n")
 
 	return b.String()
 }
 
 func (m GridModel) renderCell(idx int, width, height int) string {
+	// Account for border (1 char each side)
+	innerWidth := width - 2
+	innerHeight := height - 2
+
 	if idx >= len(m.branches) {
 		// Empty cell
 		return cellBorderStyle.
-			Width(width - 2).
-			Height(height).
+			Width(innerWidth).
+			Height(innerHeight).
 			Render("")
 	}
 
@@ -264,19 +260,27 @@ func (m GridModel) renderCell(idx int, width, height int) string {
 	// Content
 	var content string
 	if br.IsRunning() {
-		if pane, ok := m.paneContent[br.Name]; ok && pane != "" {
-			// Show captured pane content
+		if !tmux.BranchSessionExists(br.Name) {
+			content = stoppedStyle.Render("[no session - press enter to create]")
+		} else if pane, ok := m.paneContent[br.Name]; ok && pane != "" {
+			// Show captured pane content, truncate lines to fit width
 			lines := strings.Split(pane, "\n")
-			maxLines := height - 2
+			maxLines := innerHeight - 1 // -1 for header
 			if len(lines) > maxLines {
 				lines = lines[len(lines)-maxLines:]
 			}
+			// Truncate each line to fit cell width
+			for i, line := range lines {
+				if len(line) > innerWidth {
+					lines[i] = line[:innerWidth-1] + "…"
+				}
+			}
 			content = strings.Join(lines, "\n")
 		} else {
-			content = stoppedStyle.Render("(loading...)")
+			content = stoppedStyle.Render("[capturing...]")
 		}
 	} else {
-		content = cellStoppedStyle.Render("\n  [stopped]\n\n  Press 's' to start")
+		content = cellStoppedStyle.Render("[stopped] 's' to start")
 	}
 
 	// Combine header and content
@@ -289,8 +293,8 @@ func (m GridModel) renderCell(idx int, width, height int) string {
 	}
 
 	return style.
-		Width(width - 2).
-		Height(height).
+		Width(innerWidth).
+		Height(innerHeight).
 		Render(cellContent)
 }
 

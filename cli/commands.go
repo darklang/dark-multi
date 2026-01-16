@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/darklang/dark-multi/branch"
 	"github.com/darklang/dark-multi/config"
 	"github.com/darklang/dark-multi/dns"
 	"github.com/darklang/dark-multi/inotify"
@@ -43,6 +44,11 @@ TUI shortcuts:
 	rootCmd.AddCommand(proxyCmd())
 	rootCmd.AddCommand(setupDNSCmd())
 	rootCmd.AddCommand(setupInotifyCmd())
+	rootCmd.AddCommand(lsCmd())
+	rootCmd.AddCommand(newCmd())
+	rootCmd.AddCommand(startCmd())
+	rootCmd.AddCommand(stopCmd())
+	rootCmd.AddCommand(rmCmd())
 
 	return rootCmd
 }
@@ -138,6 +144,128 @@ Requires sudo. Only needed on Linux (macOS uses FSEvents).`,
 				fmt.Fprintf(os.Stderr, "\033[0;31merror:\033[0m %v\n", err)
 				os.Exit(1)
 			}
+		},
+	}
+}
+
+func lsCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "ls",
+		Short: "List all managed branches",
+		Run: func(cmd *cobra.Command, args []string) {
+			branches := branch.GetManagedBranches()
+			if len(branches) == 0 {
+				fmt.Println("No branches. Create one with: multi new <name>")
+				return
+			}
+			for _, b := range branches {
+				status := "\033[0;31m○\033[0m" // red stopped
+				if b.IsRunning() {
+					status = "\033[0;32m●\033[0m" // green running
+				}
+				fmt.Printf("%s %s\n", status, b.Name)
+			}
+		},
+	}
+}
+
+func newCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "new <name>",
+		Short: "Create a new branch",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			name := args[0]
+
+			fmt.Printf("Creating %s...\n", name)
+			b, err := branch.Create(name)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "\033[0;31merror:\033[0m %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("\033[0;32m✓\033[0m Created %s (ID=%d)\n", name, b.InstanceID())
+		},
+	}
+}
+
+func startCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "start <name>",
+		Short: "Start a branch's container",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			name := args[0]
+			b := branch.New(name)
+
+			if !b.Exists() {
+				fmt.Fprintf(os.Stderr, "\033[0;31merror:\033[0m branch %s does not exist\n", name)
+				os.Exit(1)
+			}
+
+			if b.IsRunning() {
+				fmt.Printf("\033[1;33m!\033[0m %s is already running\n", name)
+				return
+			}
+
+			fmt.Printf("Starting %s...\n", name)
+			if err := branch.Start(b); err != nil {
+				fmt.Fprintf(os.Stderr, "\033[0;31merror:\033[0m %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("\033[0;32m✓\033[0m Started %s\n", name)
+		},
+	}
+}
+
+func stopCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "stop <name>",
+		Short: "Stop a branch's container",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			name := args[0]
+			b := branch.New(name)
+
+			if !b.Exists() {
+				fmt.Fprintf(os.Stderr, "\033[0;31merror:\033[0m branch %s does not exist\n", name)
+				os.Exit(1)
+			}
+
+			if !b.IsRunning() {
+				fmt.Printf("\033[1;33m!\033[0m %s is not running\n", name)
+				return
+			}
+
+			fmt.Printf("Stopping %s...\n", name)
+			if err := branch.Stop(b); err != nil {
+				fmt.Fprintf(os.Stderr, "\033[0;31merror:\033[0m %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("\033[0;32m✓\033[0m Stopped %s\n", name)
+		},
+	}
+}
+
+func rmCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "rm <name>",
+		Short: "Remove a branch entirely",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			name := args[0]
+			b := branch.New(name)
+
+			if !b.Exists() && !b.IsManaged() {
+				fmt.Fprintf(os.Stderr, "\033[0;31merror:\033[0m branch %s does not exist\n", name)
+				os.Exit(1)
+			}
+
+			fmt.Printf("Removing %s...\n", name)
+			if err := branch.Remove(b); err != nil {
+				fmt.Fprintf(os.Stderr, "\033[0;31merror:\033[0m %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("\033[0;32m✓\033[0m Removed %s\n", name)
 		},
 	}
 }

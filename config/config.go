@@ -85,3 +85,19 @@ func SuggestMaxInstances() int {
 	cpuLimit := max(1, cpuCores/CPUPerInstance)
 	return min(ramLimit, cpuLimit, 10)
 }
+
+// GetAnthropicAPIKey returns the Anthropic API key from env or config file.
+func GetAnthropicAPIKey() string {
+	// Check environment first
+	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
+		return key
+	}
+
+	// Check config file
+	keyFile := filepath.Join(ConfigDir, "anthropic-api-key")
+	if data, err := os.ReadFile(keyFile); err == nil {
+		return strings.TrimSpace(string(data))
+	}
+
+	return ""
+}

@@ -66,6 +66,16 @@ func (b *Branch) Metadata() map[string]string {
 	return data
 }
 
+// GetName returns the branch name (implements container.BranchInfo).
+func (b *Branch) GetName() string {
+	return b.Name
+}
+
+// GetPath returns the branch path (implements container.BranchInfo).
+func (b *Branch) GetPath() string {
+	return b.Path
+}
+
 // InstanceID returns the branch instance ID.
 func (b *Branch) InstanceID() int {
 	if id, ok := b.Metadata()["ID"]; ok {

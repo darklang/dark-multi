@@ -119,7 +119,12 @@ enter       View branch details & URLs
 q           Quit
 ```
 
-**Only CLI commands:**
+**CLI commands:**
+- `multi ls` - list branches
+- `multi new <name>` - create a new branch
+- `multi start <name>` - start a branch
+- `multi stop <name>` - stop a branch
+- `multi rm <name>` - remove a branch
 - `multi proxy start|stop|status|fg` - manage proxy
 - `multi setup-dns` - one-time DNS setup
 - `multi setup-inotify` - increase file watcher limits (Linux only)
@@ -127,6 +132,7 @@ q           Quit
 **Features:**
 - Clones from GitHub automatically
 - Claude status detection (waiting/working indicators)
+- Container startup progress (tree-sitter → F# → BwdServer → packages → ready)
 - Branch metadata in `~/.config/dark-multi/overrides/<branch>/`
 
 ## Architecture
@@ -169,7 +175,29 @@ Routes `<canvas>.<branch>.dlio.localhost:9000` -> container's BwdServer port
 
 ## Building
 
+**Stachu's machine:** Use the build script (handles Go path, kills running processes):
 ```bash
-go build -o multi .
-cp multi ~/.local/bin/
+./build.sh
 ```
+
+**Other machines (Go 1.21+ in PATH):**
+```bash
+go build -o multi . && cp multi ~/.local/bin/
+```
+
+**Note:** System Go on Stachu's machine is 1.18 (too old). Go 1.25 is at `/home/stachu/go-sdk/go/bin/go`.
+
+## Development Guidelines
+
+**Always use `multi` for branch operations** - don't use raw docker/rm commands:
+```bash
+# Good
+multi stop <branch>
+multi rm <branch>
+
+# Bad - don't do this
+docker stop dark-<branch>
+rm -rf ~/code/dark/<branch>
+```
+
+This ensures proper cleanup of containers, tmux sessions, override configs, and metadata.

@@ -8,26 +8,36 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/darklang/dark-multi/branch"
 	"github.com/darklang/dark-multi/config"
 )
 
+// BranchInfo contains the branch information needed for container operations.
+type BranchInfo interface {
+	GetName() string
+	GetPath() string
+	PortBase() int
+	BwdPortBase() int
+}
+
 // GetOverrideConfigPath returns the path to the override config for a branch.
-func GetOverrideConfigPath(b *branch.Branch) string {
-	return filepath.Join(config.ConfigDir, "overrides", b.Name, "devcontainer.json")
+func GetOverrideConfigPath(name string) string {
+	return filepath.Join(config.ConfigDir, "overrides", name, "devcontainer.json")
 }
 
 // GenerateOverrideConfig generates a devcontainer override config for a branch.
 // Returns the path to the generated config.
-func GenerateOverrideConfig(b *branch.Branch) (string, error) {
-	overrideDir := filepath.Join(config.ConfigDir, "overrides", b.Name)
+func GenerateOverrideConfig(b BranchInfo) (string, error) {
+	name := b.GetName()
+	branchPath := b.GetPath()
+
+	overrideDir := filepath.Join(config.ConfigDir, "overrides", name)
 	if err := os.MkdirAll(overrideDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create override dir: %w", err)
 	}
 	overridePath := filepath.Join(overrideDir, "devcontainer.json")
 
 	// Read original devcontainer.json
-	originalPath := filepath.Join(b.Path, ".devcontainer", "devcontainer.json")
+	originalPath := filepath.Join(branchPath, ".devcontainer", "devcontainer.json")
 	content, err := os.ReadFile(originalPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read devcontainer.json: %w", err)
@@ -76,7 +86,7 @@ func GenerateOverrideConfig(b *branch.Branch) (string, error) {
 	hostPorts = append(hostPorts, b.BwdPortBase(), b.BwdPortBase()+1)
 
 	// Apply overrides
-	cfg["name"] = fmt.Sprintf("dark-%s", b.Name)
+	cfg["name"] = fmt.Sprintf("dark-%s", name)
 	cfg["forwardPorts"] = hostPorts
 
 	// Merge runArgs - filter out existing hostname/label/name/-p args
@@ -110,9 +120,9 @@ func GenerateOverrideConfig(b *branch.Branch) (string, error) {
 		newRunArgs = append(newRunArgs, arg)
 	}
 	newRunArgs = append(newRunArgs,
-		"--hostname", fmt.Sprintf("dark-%s", b.Name),
-		"--label", fmt.Sprintf("dark-dev-container=%s", b.Name),
-		"--name", fmt.Sprintf("dark-%s", b.Name),
+		"--hostname", fmt.Sprintf("dark-%s", name),
+		"--label", fmt.Sprintf("dark-dev-container=%s", name),
+		"--name", fmt.Sprintf("dark-%s", name),
 	)
 	for _, arg := range portArgs {
 		newRunArgs = append(newRunArgs, arg)
@@ -123,9 +133,9 @@ func GenerateOverrideConfig(b *branch.Branch) (string, error) {
 	homeDir, _ := os.UserHomeDir()
 	claudeDir := filepath.Join(homeDir, ".claude")
 	cfg["mounts"] = []interface{}{
-		fmt.Sprintf("type=volume,src=dark_nuget_%s,dst=/home/dark/.nuget", b.Name),
-		fmt.Sprintf("type=volume,src=dark-vscode-ext-%s,dst=/home/dark/.vscode-server/extensions", b.Name),
-		fmt.Sprintf("type=volume,src=dark-vscode-ext-insiders-%s,dst=/home/dark/.vscode-server-insiders/extensions", b.Name),
+		fmt.Sprintf("type=volume,src=dark_nuget_%s,dst=/home/dark/.nuget", name),
+		fmt.Sprintf("type=volume,src=dark-vscode-ext-%s,dst=/home/dark/.vscode-server/extensions", name),
+		fmt.Sprintf("type=volume,src=dark-vscode-ext-insiders-%s,dst=/home/dark/.vscode-server-insiders/extensions", name),
 		// Mount Claude credentials and config (shared across branches)
 		fmt.Sprintf("type=bind,src=%s,dst=/home/dark/.claude,consistency=cached", claudeDir),
 	}
@@ -144,6 +154,16 @@ func GenerateOverrideConfig(b *branch.Branch) (string, error) {
 			postCreate = claudeInstall
 		}
 		cfg["postCreateCommand"] = postCreate
+	}
+
+	// Add ANTHROPIC_API_KEY to container environment if available
+	if apiKey := config.GetAnthropicAPIKey(); apiKey != "" {
+		containerEnv := make(map[string]interface{})
+		if existing, ok := cfg["containerEnv"].(map[string]interface{}); ok {
+			containerEnv = existing
+		}
+		containerEnv["ANTHROPIC_API_KEY"] = apiKey
+		cfg["containerEnv"] = containerEnv
 	}
 
 	// Write merged config

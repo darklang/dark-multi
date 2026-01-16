@@ -51,16 +51,17 @@ func FindSourceRepo() string {
 		}
 	}
 
-	// Check for 'main' branch
+	// Check for 'main' branch (must be fully cloned - has devcontainer.json)
 	mainPath := filepath.Join(config.DarkRoot, "main")
-	gitPath := filepath.Join(mainPath, ".git")
-	if info, err := os.Stat(gitPath); err == nil && info.IsDir() {
+	devcontainerPath := filepath.Join(mainPath, ".devcontainer", "devcontainer.json")
+	if _, err := os.Stat(devcontainerPath); err == nil {
 		return mainPath
 	}
 
-	// Check any existing managed branch (via overrides dir)
+	// Check any existing managed branch (must be fully cloned)
 	for _, b := range GetManagedBranches() {
-		if b.Exists() {
+		devcontainer := filepath.Join(b.Path, ".devcontainer", "devcontainer.json")
+		if _, err := os.Stat(devcontainer); err == nil {
 			return b.Path
 		}
 	}
