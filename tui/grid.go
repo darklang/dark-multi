@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -43,30 +44,39 @@ const (
 	GridInputConfirmDelete
 )
 
+// ContainerStats holds CPU/memory usage for a container.
+type ContainerStats struct {
+	CPU    string // e.g., "12.5%"
+	Memory string // e.g., "1.2GB"
+}
+
 // GridModel displays all Claude sessions in a grid layout.
 type GridModel struct {
-	branches       []*branch.Branch
-	paneContent    map[string]string // branch name -> captured content
-	cursor         int
-	width          int
-	height         int
-	message        string
-	err            error
-	inputMode    GridInputMode
-	inputText    string
-	proxyRunning bool
-	loading        bool
+	branches        []*branch.Branch
+	paneContent     map[string]string         // branch name -> captured content
+	containerStats  map[string]ContainerStats // branch name -> stats
+	cursor          int
+	width           int
+	height          int
+	message         string
+	err             error
+	inputMode       GridInputMode
+	inputText       string
+	proxyRunning    bool
+	loading         bool
 }
 
 // Grid layout messages
 type paneContentMsg map[string]string
+type containerStatsMsg map[string]ContainerStats
 type gridTickMsg time.Time
 
 // NewGridModel creates a new grid view.
 func NewGridModel() GridModel {
 	return GridModel{
-		branches:    branch.GetManagedBranches(),
-		paneContent: make(map[string]string),
+		branches:       branch.GetManagedBranches(),
+		paneContent:    make(map[string]string),
+		containerStats: make(map[string]ContainerStats),
 	}
 }
 
@@ -74,13 +84,14 @@ func NewGridModel() GridModel {
 func (m GridModel) Init() tea.Cmd {
 	return tea.Batch(
 		m.loadPaneContent,
+		loadContainerStats,
 		checkProxyStatus,
 		gridTickCmd(),
 	)
 }
 
 func gridTickCmd() tea.Cmd {
-	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
+	return tea.Tick(1*time.Second, func(t time.Time) tea.Msg {
 		return gridTickMsg(t)
 	})
 }
@@ -93,6 +104,31 @@ func (m GridModel) loadPaneContent() tea.Msg {
 		}
 	}
 	return paneContentMsg(content)
+}
+
+func loadContainerStats() tea.Msg {
+	stats := make(map[string]ContainerStats)
+	// Get stats for all dark- containers in one call
+	out, err := exec.Command("docker", "stats", "--no-stream", "--format", "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}").Output()
+	if err != nil {
+		return containerStatsMsg(stats)
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Split(line, "\t")
+		if len(fields) >= 3 && strings.HasPrefix(fields[0], "dark-") {
+			name := strings.TrimPrefix(fields[0], "dark-")
+			// Parse memory - just take the used part (before " / ")
+			mem := fields[2]
+			if idx := strings.Index(mem, " / "); idx > 0 {
+				mem = mem[:idx]
+			}
+			stats[name] = ContainerStats{
+				CPU:    fields[1],
+				Memory: mem,
+			}
+		}
+	}
+	return containerStatsMsg(stats)
 }
 
 // Update handles messages.
@@ -192,7 +228,9 @@ func (m GridModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Start selected branch
 			if len(m.branches) > 0 && m.cursor < len(m.branches) {
 				b := m.branches[m.cursor]
-				if !b.IsRunning() {
+				if b.IsRunning() {
+					m.message = fmt.Sprintf("%s is already running", b.Name)
+				} else {
 					m.message = fmt.Sprintf("Starting %s...", b.Name)
 					m.loading = true
 					return m, m.startBranch(b)
@@ -203,7 +241,9 @@ func (m GridModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Kill (stop) selected branch
 			if len(m.branches) > 0 && m.cursor < len(m.branches) {
 				b := m.branches[m.cursor]
-				if b.IsRunning() {
+				if !b.IsRunning() {
+					m.message = fmt.Sprintf("%s is already stopped", b.Name)
+				} else {
 					m.message = fmt.Sprintf("Killing %s...", b.Name)
 					m.loading = true
 					return m, m.stopBranch(b)
@@ -227,6 +267,10 @@ func (m GridModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Open VS Code (editor)
 			if len(m.branches) > 0 && m.cursor < len(m.branches) {
 				b := m.branches[m.cursor]
+				if !b.IsRunning() {
+					m.message = fmt.Sprintf("%s is stopped - press 's' to start", b.Name)
+					return m, nil
+				}
 				return m, m.openCode(b)
 			}
 
@@ -264,6 +308,12 @@ func (m GridModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case containerStatsMsg:
+		if msg != nil {
+			m.containerStats = msg
+		}
+		return m, nil
+
 	case proxyStatusMsg:
 		m.proxyRunning = bool(msg)
 		return m, nil
@@ -275,7 +325,7 @@ func (m GridModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = len(m.branches) - 1
 		}
 		// Note: Don't clean up globalPendingBranches here - let branchStartedMsg handle it
-		return m, tea.Batch(m.loadPaneContent, gridTickCmd())
+		return m, tea.Batch(m.loadPaneContent, loadContainerStats, gridTickCmd())
 
 	case createStepMsg:
 		if pending, ok := globalPendingBranches[msg.name]; ok {
@@ -455,8 +505,8 @@ func (m GridModel) View() string {
 		height = 40
 	}
 
-	// Reserve 4 lines for status bar, newline, and help/message
-	cellHeight := (height - 4) / 2
+	// Reserve 5 lines for newline, status bar, newline, and help/message
+	cellHeight := (height - 5) / 2
 
 	// Build rows (2 rows)
 	var rows []string
@@ -489,6 +539,7 @@ func (m GridModel) View() string {
 	b.WriteString(lipgloss.JoinVertical(lipgloss.Left, rows...))
 
 	// Status bar
+	b.WriteString("\n")
 	b.WriteString(m.renderStatusBar())
 	b.WriteString("\n")
 
@@ -512,13 +563,45 @@ func (m GridModel) renderStatusBar() string {
 			running++
 		}
 	}
+
+	// Calculate total CPU and RAM usage
+	var totalCPU float64
+	var totalMemMB float64
+	for _, stats := range m.containerStats {
+		// Parse CPU like "12.5%"
+		var cpu float64
+		fmt.Sscanf(strings.TrimSuffix(stats.CPU, "%"), "%f", &cpu)
+		totalCPU += cpu
+		// Parse memory like "1.2GiB" or "500MiB"
+		mem := stats.Memory
+		var memVal float64
+		if strings.HasSuffix(mem, "GiB") {
+			fmt.Sscanf(strings.TrimSuffix(mem, "GiB"), "%f", &memVal)
+			totalMemMB += memVal * 1024
+		} else if strings.HasSuffix(mem, "MiB") {
+			fmt.Sscanf(strings.TrimSuffix(mem, "MiB"), "%f", &memVal)
+			totalMemMB += memVal
+		}
+	}
+
 	maxSuggested := config.SuggestMaxInstances()
 	proxyStatus := stoppedStyle.Render("○")
 	if m.proxyRunning {
 		proxyStatus = runningStyle.Render("●")
 	}
-	return statusBarStyle.Render(fmt.Sprintf("%d cores, %dGB  •  %d/%d running  •  proxy %s",
-		cpuCores, ramGB, running, maxSuggested, proxyStatus))
+
+	// Calculate percentages of host resources
+	hostCpuPct := totalCPU / float64(cpuCores)
+	hostMemPct := totalMemMB / (float64(ramGB) * 1024) * 100
+
+	// Format total memory
+	memStr := fmt.Sprintf("%.0fMB", totalMemMB)
+	if totalMemMB >= 1024 {
+		memStr = fmt.Sprintf("%.1fGB", totalMemMB/1024)
+	}
+
+	return statusBarStyle.Render(fmt.Sprintf("%d cores, %dGB  •  %d/%d running (%.0f%% CPU, %s/%.0f%% RAM)  •  proxy %s",
+		cpuCores, ramGB, running, maxSuggested, hostCpuPct, memStr, hostMemPct, proxyStatus))
 }
 
 func (m GridModel) renderCell(idx int, width, height int) string {
@@ -544,7 +627,7 @@ func (m GridModel) renderCell(idx int, width, height int) string {
 		return style.Width(innerWidth).Height(innerHeight).Render(header + "\n" + content)
 	}
 
-	// Header with git status
+	// Header with status icon and branch name
 	var header string
 	statusIcon := stoppedStyle.Render("○")
 	if br.IsRunning() {
@@ -552,17 +635,35 @@ func (m GridModel) renderCell(idx int, width, height int) string {
 	}
 	header = statusIcon + " " + cellHeaderStyle.Render(br.Name)
 
-	// Add git status if there are changes
-	modified, untracked := br.GitStatus()
-	if modified > 0 || untracked > 0 {
-		var parts []string
-		if modified > 0 {
-			parts = append(parts, fmt.Sprintf("%dM", modified))
+	// Add git stats (commits ahead, lines changed)
+	commits, added, removed := br.GitStats()
+	if commits > 0 || added > 0 || removed > 0 {
+		header += helpStyle.Render(fmt.Sprintf(", git: %dc +%d/-%d", commits, added, removed))
+	}
+
+	// Add CPU/RAM stats if running
+	if stats, ok := m.containerStats[br.Name]; ok && br.IsRunning() {
+		cpuCores, ramGB := config.GetSystemResources()
+		// Convert CPU percentage to % of total host CPU
+		var cpuPct float64
+		fmt.Sscanf(strings.TrimSuffix(stats.CPU, "%"), "%f", &cpuPct)
+		hostCpuPct := cpuPct / float64(cpuCores)
+		// Parse memory and calculate % of host RAM
+		mem := stats.Memory
+		var memMB float64
+		if strings.HasSuffix(mem, "GiB") {
+			var v float64
+			fmt.Sscanf(strings.TrimSuffix(mem, "GiB"), "%f", &v)
+			memMB = v * 1024
+		} else if strings.HasSuffix(mem, "MiB") {
+			fmt.Sscanf(strings.TrimSuffix(mem, "MiB"), "%f", &memMB)
 		}
-		if untracked > 0 {
-			parts = append(parts, fmt.Sprintf("%d?", untracked))
+		memPct := memMB / (float64(ramGB) * 1024) * 100
+		memStr := fmt.Sprintf("%.0fMB", memMB)
+		if memMB >= 1024 {
+			memStr = fmt.Sprintf("%.1fGB", memMB/1024)
 		}
-		header += "  " + helpStyle.Render(strings.Join(parts, " "))
+		header += helpStyle.Render(fmt.Sprintf(", CPU: %.0f%%, RAM: %s/%.0f%%", hostCpuPct, memStr, memPct))
 	}
 
 	// Content

@@ -279,6 +279,10 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Open VS Code (editor) for selected branch
 			if len(m.branches) > 0 {
 				b := m.branches[m.cursor]
+				if !b.IsRunning() {
+					m.message = fmt.Sprintf("%s is not running", b.Name)
+					return m, nil
+				}
 				return m, m.openCode(b)
 			}
 

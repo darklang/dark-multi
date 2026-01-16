@@ -96,7 +96,7 @@ func StartWithProgress(b *Branch, onProgress func(status string)) error {
 	// This prevents the theme selection prompt from appearing
 	ensureClaudeSettings()
 
-	progress("generating config")
+	progress("preparing container")
 
 	// Generate override config
 	overrideConfig, err := container.GenerateOverrideConfig(b)
@@ -104,7 +104,7 @@ func StartWithProgress(b *Branch, onProgress func(status string)) error {
 		return fmt.Errorf("failed to generate override config: %w", err)
 	}
 
-	progress("starting devcontainer")
+	progress("starting container")
 
 	// Start the devcontainer with output capture
 	cmd := exec.Command("devcontainer", "up",
@@ -149,14 +149,16 @@ func StartWithProgress(b *Branch, onProgress func(status string)) error {
 // Progress levels in order - higher number = further along
 var progressLevels = map[string]int{
 	"pulling image":        1,
-	"container started":    2,
-	"post-create setup":    3,
-	"post-start setup":     4,
-	"building tree-sitter": 5,
-	"restoring packages":   6,
-	"building F#":          7,
-	"starting build server": 8,
-	"ready":                9,
+	"building image":       2,
+	"creating container":   3,
+	"container started":    4,
+	"post-create setup":    5,
+	"post-start setup":     6,
+	"building tree-sitter": 7,
+	"restoring packages":   8,
+	"building F#":          9,
+	"starting build server": 10,
+	"ready":                11,
 }
 
 // currentProgressLevel tracks the highest progress seen per branch
@@ -197,12 +199,16 @@ func parseDevcontainerLine(line string, stepRegex *regexp.Regexp, branchName str
 		switch {
 		case strings.Contains(lower, "pulling from") || strings.Contains(line, "Pull complete"):
 			status = "pulling image"
+		case strings.Contains(lower, "step ") && strings.Contains(lower, "run "):
+			status = "building image"
+		case strings.Contains(lower, "creating container") || strings.Contains(lower, "start container"):
+			status = "creating container"
+		case strings.Contains(lower, "container started") || strings.Contains(lower, "starting container"):
+			status = "container started"
 		case strings.Contains(lower, "running the postcreatecommand"):
 			status = "post-create setup"
 		case strings.Contains(lower, "running the poststartcommand"):
 			status = "post-start setup"
-		case strings.Contains(lower, "container started"):
-			status = "container started"
 		}
 	}
 
