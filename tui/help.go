@@ -68,6 +68,26 @@ func (m HelpModel) View() string {
 	b.WriteString("  l           View logs (from detail view)\n")
 	b.WriteString("\n")
 
+	b.WriteString(sectionStyle.Render("Views"))
+	b.WriteString("\n")
+	b.WriteString("  g           Grid view (all Claude sessions tiled)\n")
+	b.WriteString("  enter       Detail view (branch info + URLs)\n")
+	b.WriteString("\n")
+
+	b.WriteString(sectionStyle.Render("Grid View"))
+	b.WriteString("\n")
+	b.WriteString("  arrows      Navigate cells\n")
+	b.WriteString("  enter       Focus on session (attach tmux)\n")
+	b.WriteString("  s           Start stopped branch\n")
+	b.WriteString("  esc         Back to dashboard\n")
+	b.WriteString("\n")
+
+	b.WriteString(sectionStyle.Render("Focused View (tmux)"))
+	b.WriteString("\n")
+	b.WriteString("  ctrl-b d    Detach (back to grid)\n")
+	b.WriteString("  ctrl-b [    Scroll mode\n")
+	b.WriteString("\n")
+
 	b.WriteString(sectionStyle.Render("System"))
 	b.WriteString("\n")
 	b.WriteString("  p           Toggle proxy server\n")

@@ -247,6 +247,11 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loading = true
 			return m, loadBranches
 
+		case "g":
+			// Grid view - show all Claude sessions
+			grid := NewGridModel(m.branches)
+			return grid, grid.Init()
+
 		case "n":
 			// New branch - enter input mode
 			m.inputMode = InputNewBranch
@@ -480,7 +485,7 @@ func (m HomeModel) View() string {
 	}
 
 	// Help
-	b.WriteString(helpStyle.Render("[n]ew  [d]elete  [s]tart  [k]ill  [t]mux  [c]ode  [p]roxy  [?] help  [q]uit"))
+	b.WriteString(helpStyle.Render("[n]ew  [d]el  [s]tart  [k]ill  [g]rid  [t]mux  [c]ode  [p]roxy  [?]  [q]uit"))
 	b.WriteString("\n")
 
 	return b.String()

@@ -68,6 +68,28 @@ func CreateBranchSession(branchName string, containerID string, branchPath strin
 	return nil
 }
 
+// CapturePaneContent captures the visible content of the Claude pane (pane 1) for a branch.
+// Returns the last `lines` lines of output.
+func CapturePaneContent(branchName string, lines int) string {
+	if !BranchSessionExists(branchName) {
+		return ""
+	}
+	session := BranchSessionName(branchName)
+	// Capture pane 1 (Claude pane) content
+	cmd := exec.Command("tmux", "capture-pane", "-t", fmt.Sprintf("%s.1", session), "-p", "-S", fmt.Sprintf("-%d", lines))
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// AttachCommand returns the command to attach to a branch's tmux session.
+func AttachCommand(branchName string) *exec.Cmd {
+	session := BranchSessionName(branchName)
+	return exec.Command("tmux", "attach", "-t", session)
+}
+
 // KillBranchSession kills a branch's tmux session.
 func KillBranchSession(branchName string) error {
 	if BranchSessionExists(branchName) {
