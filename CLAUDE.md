@@ -201,3 +201,5 @@ rm -rf ~/code/dark/<branch>
 ```
 
 This ensures proper cleanup of containers, tmux sessions, override configs, and metadata.
+
+**No attribution in commits** - don't add Co-Authored-By or similar lines.
