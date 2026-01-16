@@ -7,7 +7,7 @@ import (
 // Run starts the TUI application.
 func Run() error {
 	p := tea.NewProgram(
-		NewHomeModel(),
+		NewGridModel(),
 		tea.WithAltScreen(),
 	)
 

@@ -31,9 +31,9 @@ func (m HelpModel) Init() tea.Cmd {
 func (m HelpModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		// Any key returns to home
-		home := NewHomeModel()
-		return home, home.Init()
+		// Any key returns to grid
+		grid := NewGridModel()
+		return grid, grid.Init()
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width

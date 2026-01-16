@@ -262,7 +262,7 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "g":
 			// Grid view - show all Claude sessions
-			grid := NewGridModel(m.branches)
+			grid := NewGridModel()
 			return grid, grid.Init()
 
 		case "n":

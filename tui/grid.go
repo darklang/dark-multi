@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/darklang/dark-multi/branch"
+	"github.com/darklang/dark-multi/config"
 	"github.com/darklang/dark-multi/tmux"
 )
 
@@ -30,14 +31,29 @@ var (
 				Italic(true)
 )
 
+// GridInputMode represents input modes.
+type GridInputMode int
+
+const (
+	GridInputNone GridInputMode = iota
+	GridInputNewBranch
+	GridInputConfirmDelete
+)
+
 // GridModel displays all Claude sessions in a grid layout.
 type GridModel struct {
-	branches    []*branch.Branch
-	paneContent map[string]string // branch name -> captured content
-	cursor      int               // selected cell index
-	width       int
-	height      int
-	message     string
+	branches        []*branch.Branch
+	pendingBranches map[string]*PendingBranch
+	paneContent     map[string]string // branch name -> captured content
+	cursor          int
+	width           int
+	height          int
+	message         string
+	err             error
+	inputMode       GridInputMode
+	inputText       string
+	proxyRunning    bool
+	loading         bool
 }
 
 // Grid layout messages
@@ -45,10 +61,11 @@ type paneContentMsg map[string]string
 type gridTickMsg time.Time
 
 // NewGridModel creates a new grid view.
-func NewGridModel(branches []*branch.Branch) GridModel {
+func NewGridModel() GridModel {
 	return GridModel{
-		branches:    branches,
-		paneContent: make(map[string]string),
+		branches:        branch.GetManagedBranches(),
+		pendingBranches: make(map[string]*PendingBranch),
+		paneContent:     make(map[string]string),
 	}
 }
 
@@ -56,6 +73,7 @@ func NewGridModel(branches []*branch.Branch) GridModel {
 func (m GridModel) Init() tea.Cmd {
 	return tea.Batch(
 		m.loadPaneContent,
+		checkProxyStatus,
 		gridTickCmd(),
 	)
 }
@@ -80,11 +98,18 @@ func (m GridModel) loadPaneContent() tea.Msg {
 func (m GridModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Handle input modes first
+		if m.inputMode != GridInputNone {
+			return m.handleInputMode(msg)
+		}
+
+		// Clear message on keypress
+		m.message = ""
+		m.err = nil
+
 		switch msg.String() {
-		case "esc", "q":
-			// Return to home
-			home := NewHomeModel()
-			return home, home.Init()
+		case "q", "ctrl+c":
+			return m, tea.Quit
 
 		case "left", "h":
 			if m.cursor > 0 {
@@ -108,17 +133,15 @@ func (m GridModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor += cols
 			}
 
-		case "enter":
-			// Focus on selected branch - open in separate terminal window
+		case "enter", "t":
+			// Open terminal for selected branch
 			if len(m.branches) > 0 && m.cursor < len(m.branches) {
 				b := m.branches[m.cursor]
 				if b.IsRunning() {
-					// Ensure session exists
 					if !tmux.BranchSessionExists(b.Name) {
 						containerID, _ := b.ContainerID()
 						tmux.CreateBranchSession(b.Name, containerID, b.Path)
 					}
-					// Open in separate terminal window
 					if err := tmux.OpenBranchInTerminal(b.Name); err != nil {
 						m.message = fmt.Sprintf("Error: %v", err)
 					}
@@ -133,33 +156,127 @@ func (m GridModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				b := m.branches[m.cursor]
 				if !b.IsRunning() {
 					m.message = fmt.Sprintf("Starting %s...", b.Name)
+					m.loading = true
 					return m, m.startBranch(b)
 				}
 			}
+
+		case "K":
+			// Kill selected branch (capital K to avoid conflict with up)
+			if len(m.branches) > 0 && m.cursor < len(m.branches) {
+				b := m.branches[m.cursor]
+				if b.IsRunning() {
+					m.message = fmt.Sprintf("Killing %s...", b.Name)
+					m.loading = true
+					return m, m.stopBranch(b)
+				}
+			}
+
+		case "n":
+			// New branch
+			m.inputMode = GridInputNewBranch
+			m.inputText = ""
+			return m, nil
+
+		case "x":
+			// Delete branch
+			if len(m.branches) > 0 {
+				m.inputMode = GridInputConfirmDelete
+				return m, nil
+			}
+
+		case "c":
+			// Open VS Code
+			if len(m.branches) > 0 && m.cursor < len(m.branches) {
+				b := m.branches[m.cursor]
+				return m, m.openCode(b)
+			}
+
+		case "m":
+			// Open Matter
+			if len(m.branches) > 0 && m.cursor < len(m.branches) {
+				b := m.branches[m.cursor]
+				url := fmt.Sprintf("dark-packages.%s.dlio.localhost:%d/ping", b.Name, config.ProxyPort)
+				openInBrowser(url)
+				m.message = "Opened Matter"
+			}
+
+		case "d":
+			// Open diff (gitk)
+			if len(m.branches) > 0 && m.cursor < len(m.branches) {
+				b := m.branches[m.cursor]
+				return m, m.openDiff(b)
+			}
+
+		case "a":
+			// Auth Claude
+			if len(m.branches) > 0 && m.cursor < len(m.branches) {
+				b := m.branches[m.cursor]
+				if !b.IsRunning() {
+					m.message = "Start the branch first"
+					return m, nil
+				}
+				auth := NewAuthModel(b)
+				return auth, auth.Init()
+			}
+
+		case "?":
+			return NewHelpModel(), nil
 		}
 
 	case paneContentMsg:
 		if msg != nil {
 			m.paneContent = msg
 		}
-		// Content loaded, no immediate reload (tick handles periodic refresh)
+		return m, nil
+
+	case proxyStatusMsg:
+		m.proxyRunning = bool(msg)
 		return m, nil
 
 	case gridTickMsg:
 		// Refresh branches and content periodically
 		m.branches = branch.GetManagedBranches()
-		if m.cursor >= len(m.branches) {
-			m.cursor = max(0, len(m.branches)-1)
+		if m.cursor >= len(m.branches) && len(m.branches) > 0 {
+			m.cursor = len(m.branches) - 1
 		}
 		return m, tea.Batch(m.loadPaneContent, gridTickCmd())
 
+	case createStepMsg:
+		if msg.step == 1 {
+			if pending, ok := m.pendingBranches[msg.name]; ok {
+				pending.Status = "starting container"
+			}
+			return m, startBranchStep(msg.branch, msg.name)
+		}
+		// Step 2: check auth
+		if pending, ok := m.pendingBranches[msg.name]; ok {
+			pending.Status = "checking auth"
+		}
+		return m, CheckAuthNeeded(msg.branch)
+
+	case authNeededMsg:
+		delete(m.pendingBranches, msg.branch.Name)
+		m.loading = false
+		m.branches = branch.GetManagedBranches()
+		if msg.needed {
+			auth := NewAuthModel(msg.branch)
+			return auth, auth.Init()
+		}
+		return m, m.loadPaneContent
+
 	case operationDoneMsg:
 		m.message = msg.message
+		m.loading = false
 		m.branches = branch.GetManagedBranches()
 		return m, m.loadPaneContent
 
 	case operationErrMsg:
-		m.message = fmt.Sprintf("Error: %v", msg.err)
+		for name := range m.pendingBranches {
+			delete(m.pendingBranches, name)
+		}
+		m.err = msg.err
+		m.loading = false
 		return m, nil
 
 	case tea.WindowSizeMsg:
@@ -170,8 +287,71 @@ func (m GridModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m GridModel) handleInputMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch m.inputMode {
+	case GridInputNewBranch:
+		switch msg.String() {
+		case "enter":
+			if m.inputText == "" {
+				m.inputMode = GridInputNone
+				return m, nil
+			}
+			name := m.inputText
+			m.inputMode = GridInputNone
+			m.inputText = ""
+			m.loading = true
+			b := branch.New(name)
+			if b.Exists() {
+				m.pendingBranches[name] = &PendingBranch{Name: name, Status: "starting container"}
+			} else {
+				m.pendingBranches[name] = &PendingBranch{Name: name, Status: "cloning from GitHub"}
+			}
+			return m, m.createAndStartBranch(name)
+
+		case "esc":
+			m.inputMode = GridInputNone
+			m.inputText = ""
+			return m, nil
+
+		case "backspace":
+			if len(m.inputText) > 0 {
+				m.inputText = m.inputText[:len(m.inputText)-1]
+			}
+			return m, nil
+
+		default:
+			key := msg.String()
+			if len(key) == 1 && isValidBranchChar(key[0]) {
+				m.inputText += key
+			}
+			return m, nil
+		}
+
+	case GridInputConfirmDelete:
+		switch msg.String() {
+		case "y", "Y":
+			if len(m.branches) > 0 && m.cursor < len(m.branches) {
+				b := m.branches[m.cursor]
+				m.inputMode = GridInputNone
+				m.loading = true
+				m.message = fmt.Sprintf("Removing %s...", b.Name)
+				return m, m.removeBranch(b)
+			}
+			m.inputMode = GridInputNone
+			return m, nil
+
+		case "n", "N", "esc":
+			m.inputMode = GridInputNone
+			m.message = "Cancelled"
+			return m, nil
+		}
+	}
+
+	return m, nil
+}
+
 func (m GridModel) numCols() int {
-	n := len(m.branches)
+	n := len(m.branches) + len(m.pendingBranches)
 	if n == 0 {
 		return 1
 	}
@@ -183,73 +363,139 @@ func (m GridModel) numCols() int {
 func (m GridModel) View() string {
 	var b strings.Builder
 
-	if len(m.branches) == 0 {
-		b.WriteString(stoppedStyle.Render("No branches. Press 'esc' to go back and create one."))
-		b.WriteString("\n")
+	totalBranches := len(m.branches) + len(m.pendingBranches)
+
+	// Handle input modes
+	if m.inputMode == GridInputNewBranch {
+		b.WriteString(titleStyle.Render("NEW BRANCH"))
+		b.WriteString("\n\n")
+		b.WriteString(selectedStyle.Render("Name: "))
+		b.WriteString(m.inputText)
+		b.WriteString("█\n\n")
+		b.WriteString(helpStyle.Render("[enter] create  [esc] cancel"))
 		return b.String()
 	}
 
-	// Calculate cell dimensions - maximize screen usage
-	cols := m.numCols()
+	if m.inputMode == GridInputConfirmDelete {
+		b.WriteString(titleStyle.Render("DELETE BRANCH"))
+		b.WriteString("\n\n")
+		if len(m.branches) > 0 && m.cursor < len(m.branches) {
+			br := m.branches[m.cursor]
+			if br.HasChanges() {
+				b.WriteString(errorStyle.Render(fmt.Sprintf("⚠ '%s' has uncommitted changes!\n", br.Name)))
+			}
+			b.WriteString(fmt.Sprintf("Delete '%s'? [y/n]", br.Name))
+		}
+		return b.String()
+	}
 
-	// Use sensible defaults if window size not yet known
+	if totalBranches == 0 {
+		b.WriteString(titleStyle.Render("DARK MULTI"))
+		b.WriteString("\n\n")
+		b.WriteString(stoppedStyle.Render("No branches. Press 'n' to create one."))
+		b.WriteString("\n\n")
+		b.WriteString(m.renderStatusBar())
+		b.WriteString("\n")
+		b.WriteString(helpStyle.Render("[n]ew  [?]help  [q]uit"))
+		return b.String()
+	}
+
+	// Calculate cell dimensions
+	cols := m.numCols()
 	width := m.width
 	if width < 40 {
-		width = 120 // reasonable default
+		width = 120
 	}
 	height := m.height
 	if height < 10 {
-		height = 40 // reasonable default
+		height = 40
 	}
 
-	// 2 rows, 1 line for help
-	cellHeight := (height - 1) / 2
+	// Reserve 2 lines for status bar and help
+	cellHeight := (height - 2) / 2
 
 	// Build rows (2 rows)
 	var rows []string
+	branchIdx := 0
 	for row := 0; row < 2; row++ {
 		var cells []string
 		remainingWidth := width
 		for col := 0; col < cols; col++ {
-			idx := row*cols + col
-			// Last column gets remaining width to avoid gaps
 			cellWidth := remainingWidth / (cols - col)
 			remainingWidth -= cellWidth
-			cell := m.renderCell(idx, cellWidth, cellHeight)
-			cells = append(cells, cell)
+
+			if branchIdx < len(m.branches) {
+				cells = append(cells, m.renderCell(branchIdx, cellWidth, cellHeight))
+				branchIdx++
+			} else {
+				// Render pending branches
+				pendingIdx := branchIdx - len(m.branches)
+				i := 0
+				for _, pb := range m.pendingBranches {
+					if i == pendingIdx {
+						cells = append(cells, m.renderPendingCell(pb, cellWidth, cellHeight))
+						branchIdx++
+						break
+					}
+					i++
+				}
+				if i == len(m.pendingBranches) {
+					// Empty cell
+					cells = append(cells, cellBorderStyle.Width(cellWidth-2).Height(cellHeight-2).Render(""))
+					branchIdx++
+				}
+			}
 		}
 		rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, cells...))
 	}
 
 	b.WriteString(lipgloss.JoinVertical(lipgloss.Left, rows...))
 
-	// Message or help on last line
-	if m.message != "" {
+	// Status bar
+	b.WriteString(m.renderStatusBar())
+	b.WriteString("\n")
+
+	// Message or help
+	if m.err != nil {
+		b.WriteString(errorStyle.Render(fmt.Sprintf("Error: %v", m.err)))
+	} else if m.message != "" {
 		b.WriteString(m.message)
 	} else {
-		b.WriteString(helpStyle.Render("←↑↓→:nav  enter:focus  s:start  esc:back"))
+		b.WriteString(helpStyle.Render("[n]ew [x]del [s]tart [K]ill [a]uth [d]iff [t]mux [c]ode [m]atter [?]help [q]uit"))
 	}
 
 	return b.String()
 }
 
+func (m GridModel) renderStatusBar() string {
+	cpuCores, ramGB := config.GetSystemResources()
+	running := 0
+	for _, br := range m.branches {
+		if br.IsRunning() {
+			running++
+		}
+	}
+	maxSuggested := config.SuggestMaxInstances()
+	proxyStatus := stoppedStyle.Render("○")
+	if m.proxyRunning {
+		proxyStatus = runningStyle.Render("●")
+	}
+	return statusBarStyle.Render(fmt.Sprintf("%d cores, %dGB  •  %d/%d running  •  proxy %s",
+		cpuCores, ramGB, running, maxSuggested, proxyStatus))
+}
+
 func (m GridModel) renderCell(idx int, width, height int) string {
-	// Account for border (1 char each side)
 	innerWidth := width - 2
 	innerHeight := height - 2
 
 	if idx >= len(m.branches) {
-		// Empty cell
-		return cellBorderStyle.
-			Width(innerWidth).
-			Height(innerHeight).
-			Render("")
+		return cellBorderStyle.Width(innerWidth).Height(innerHeight).Render("")
 	}
 
 	br := m.branches[idx]
 	selected := idx == m.cursor
 
-	// Header: branch name + status
+	// Header
 	var header string
 	if br.IsRunning() {
 		header = runningStyle.Render("●") + " " + cellHeaderStyle.Render(br.Name)
@@ -261,15 +507,13 @@ func (m GridModel) renderCell(idx int, width, height int) string {
 	var content string
 	if br.IsRunning() {
 		if !tmux.BranchSessionExists(br.Name) {
-			content = stoppedStyle.Render("[no session - press enter to create]")
+			content = stoppedStyle.Render("[no session - press enter]")
 		} else if pane, ok := m.paneContent[br.Name]; ok && pane != "" {
-			// Show captured pane content, truncate lines to fit width
 			lines := strings.Split(pane, "\n")
-			maxLines := innerHeight - 1 // -1 for header
+			maxLines := innerHeight - 1
 			if len(lines) > maxLines {
 				lines = lines[len(lines)-maxLines:]
 			}
-			// Truncate each line to fit cell width
 			for i, line := range lines {
 				if len(line) > innerWidth {
 					lines[i] = line[:innerWidth-1] + "…"
@@ -280,23 +524,30 @@ func (m GridModel) renderCell(idx int, width, height int) string {
 			content = stoppedStyle.Render("[capturing...]")
 		}
 	} else {
-		content = cellStoppedStyle.Render("[stopped] 's' to start")
+		content = cellStoppedStyle.Render("[stopped]")
 	}
 
-	// Combine header and content
 	cellContent := header + "\n" + content
 
-	// Apply style
 	style := cellBorderStyle
 	if selected {
 		style = cellSelectedStyle
 	}
 
-	return style.
-		Width(innerWidth).
-		Height(innerHeight).
-		Render(cellContent)
+	return style.Width(innerWidth).Height(innerHeight).Render(cellContent)
 }
+
+func (m GridModel) renderPendingCell(pb *PendingBranch, width, height int) string {
+	innerWidth := width - 2
+	innerHeight := height - 2
+
+	header := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("◐") + " " + cellHeaderStyle.Render(pb.Name)
+	content := helpStyle.Render(pb.Status)
+
+	return cellBorderStyle.Width(innerWidth).Height(innerHeight).Render(header + "\n" + content)
+}
+
+// Commands
 
 func (m GridModel) startBranch(b *branch.Branch) tea.Cmd {
 	return func() tea.Msg {
@@ -304,5 +555,51 @@ func (m GridModel) startBranch(b *branch.Branch) tea.Cmd {
 			return operationErrMsg{err}
 		}
 		return operationDoneMsg{fmt.Sprintf("Started %s", b.Name)}
+	}
+}
+
+func (m GridModel) stopBranch(b *branch.Branch) tea.Cmd {
+	return func() tea.Msg {
+		if err := stopBranchFull(b); err != nil {
+			return operationErrMsg{err}
+		}
+		return operationDoneMsg{fmt.Sprintf("Stopped %s", b.Name)}
+	}
+}
+
+func (m GridModel) openCode(b *branch.Branch) tea.Cmd {
+	return func() tea.Msg {
+		if err := openVSCode(b); err != nil {
+			return operationErrMsg{err}
+		}
+		return operationDoneMsg{""}
+	}
+}
+
+func (m GridModel) openDiff(b *branch.Branch) tea.Cmd {
+	return func() tea.Msg {
+		if err := openGitDiff(b); err != nil {
+			return operationErrMsg{err}
+		}
+		return operationDoneMsg{""}
+	}
+}
+
+func (m GridModel) createAndStartBranch(name string) tea.Cmd {
+	return func() tea.Msg {
+		b, err := createBranchFull(name)
+		if err != nil {
+			return operationErrMsg{err}
+		}
+		return createStepMsg{name: name, branch: b, step: 1}
+	}
+}
+
+func (m GridModel) removeBranch(b *branch.Branch) tea.Cmd {
+	return func() tea.Msg {
+		if err := removeBranchFull(b); err != nil {
+			return operationErrMsg{err}
+		}
+		return operationDoneMsg{fmt.Sprintf("Removed %s", b.Name)}
 	}
 }

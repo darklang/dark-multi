@@ -112,8 +112,8 @@ func (m AuthModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cmd != nil && m.cmd.Process != nil {
 				m.cmd.Process.Kill()
 			}
-			home := NewHomeModel()
-			return home, home.Init()
+			grid := NewGridModel()
+			return grid, grid.Init()
 		}
 
 	case authURLMsg:

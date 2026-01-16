@@ -124,9 +124,9 @@ func (m BranchDetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case "esc", "backspace", "left", "h":
-			// Back to home
-			home := NewHomeModel()
-			return home, home.Init()
+			// Back to grid
+			grid := NewGridModel()
+			return grid, grid.Init()
 
 		case "up":
 			if m.urlCursor > 0 {
