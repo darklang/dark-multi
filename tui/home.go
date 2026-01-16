@@ -74,7 +74,11 @@ type progressMsg struct{ message string }
 type createStepMsg struct {
 	name   string
 	branch *branch.Branch
-	step   int // 1=clone done, 2=start done
+}
+
+// Branch started successfully
+type branchStartedMsg struct {
+	name string
 }
 
 // NewHomeModel creates a new home model.
@@ -186,34 +190,35 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "enter":
-			// Go to branch detail view
-			if len(m.branches) > 0 {
-				b := m.branches[m.cursor]
-				detail := NewBranchDetailModel(b)
-				return detail, detail.Init()
-			}
-
-		case "t":
-			// Open selected branch in terminal
+			// Open Claude for selected branch (same as 'c')
 			if len(m.branches) > 0 {
 				b := m.branches[m.cursor]
 				if !b.IsRunning() {
 					m.message = fmt.Sprintf("%s is not running", b.Name)
 					return m, nil
 				}
-				// Create session if needed
-				if !tmux.BranchSessionExists(b.Name) {
-					containerID, _ := b.ContainerID()
-					if err := tmux.CreateBranchSession(b.Name, containerID, b.Path); err != nil {
-						m.message = fmt.Sprintf("Error: %v", err)
-						return m, nil
-					}
-				}
-				// Open in terminal
-				if err := tmux.OpenBranchInTerminal(b.Name); err != nil {
+				containerID, _ := b.ContainerID()
+				if err := tmux.OpenClaude(b.Name, containerID); err != nil {
 					m.message = fmt.Sprintf("Error: %v", err)
 				} else {
-					m.message = fmt.Sprintf("Opened %s in terminal", b.Name)
+					m.message = fmt.Sprintf("Opened Claude for %s", b.Name)
+				}
+				return m, nil
+			}
+
+		case "t":
+			// Open terminal for selected branch
+			if len(m.branches) > 0 {
+				b := m.branches[m.cursor]
+				if !b.IsRunning() {
+					m.message = fmt.Sprintf("%s is not running", b.Name)
+					return m, nil
+				}
+				containerID, _ := b.ContainerID()
+				if err := tmux.OpenTerminal(b.Name, containerID); err != nil {
+					m.message = fmt.Sprintf("Error: %v", err)
+				} else {
+					m.message = fmt.Sprintf("Opened terminal for %s", b.Name)
 				}
 				return m, nil
 			}
@@ -223,7 +228,7 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.branches) > 0 {
 				b := m.branches[m.cursor]
 				if b.IsRunning() {
-					m.message = fmt.Sprintf("%s is already running. Press 't' to open terminal.", b.Name)
+					m.message = fmt.Sprintf("%s is already running. Press 'c' for Claude, 't' for terminal.", b.Name)
 				} else {
 					m.loading = true
 					m.message = fmt.Sprintf("Starting %s...", b.Name)
@@ -254,7 +259,24 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "c":
-			// Open VS Code for selected branch
+			// Open Claude for selected branch
+			if len(m.branches) > 0 {
+				b := m.branches[m.cursor]
+				if !b.IsRunning() {
+					m.message = fmt.Sprintf("%s is not running", b.Name)
+					return m, nil
+				}
+				containerID, _ := b.ContainerID()
+				if err := tmux.OpenClaude(b.Name, containerID); err != nil {
+					m.message = fmt.Sprintf("Error: %v", err)
+				} else {
+					m.message = fmt.Sprintf("Opened Claude for %s", b.Name)
+				}
+				return m, nil
+			}
+
+		case "e":
+			// Open VS Code (editor) for selected branch
 			if len(m.branches) > 0 {
 				b := m.branches[m.cursor]
 				return m, m.openCode(b)
@@ -285,18 +307,6 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.inputMode = InputConfirmDelete
 				m.message = ""
 				return m, nil
-			}
-
-		case "a":
-			// Auth Claude for selected branch
-			if len(m.branches) > 0 {
-				b := m.branches[m.cursor]
-				if !b.IsRunning() {
-					m.message = "Start the branch first"
-					return m, nil
-				}
-				auth := NewAuthModel(b)
-				return auth, auth.Init()
 			}
 
 		case "?":
@@ -338,29 +348,16 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case createStepMsg:
-		if msg.step == 1 {
-			// Clone done, now start
-			if pending, ok := m.pendingBranches[msg.name]; ok {
-				pending.Status = "starting container"
-			}
-			return m, startBranchStep(msg.branch, msg.name)
-		}
-		// Step 2: container started, check if auth needed
+		// Clone done, now start container
 		if pending, ok := m.pendingBranches[msg.name]; ok {
-			pending.Status = "checking auth"
+			pending.Status = "starting container"
 		}
-		return m, CheckAuthNeeded(msg.branch)
+		return m, startBranchStep(msg.branch, msg.name)
 
-	case authNeededMsg:
-		// Remove from pending
-		delete(m.pendingBranches, msg.branch.Name)
+	case branchStartedMsg:
+		// Branch started - done
+		delete(m.pendingBranches, msg.name)
 		m.loading = false
-		if msg.needed {
-			// Auth needed - transition to auth view
-			auth := NewAuthModel(msg.branch)
-			return auth, auth.Init()
-		}
-		// No auth needed - done
 		return m, tea.Batch(loadBranches, checkProxyStatus)
 
 	case operationDoneMsg:
@@ -571,7 +568,7 @@ func (m HomeModel) View() string {
 	}
 
 	// Help
-	b.WriteString(helpStyle.Render("[n]ew  [x]del  [s]tart  [k]ill  [a]uth  [d]iff  [g]rid  [t]mux  [c]ode  [?]  [q]uit"))
+	b.WriteString(helpStyle.Render("[n]ew  [x]del  [s]tart  [k]ill  [c]laude  [t]erm  [e]ditor  [d]iff  [g]rid  [?]  [q]uit"))
 	b.WriteString("\n")
 
 	return b.String()
@@ -718,8 +715,7 @@ func (m HomeModel) createAndStartBranch(name string) tea.Cmd {
 		if err != nil {
 			return operationErrMsg{err}
 		}
-		// Return step 1 done - UI will show progress and trigger step 2
-		return createStepMsg{name: name, branch: b, step: 1}
+		return createStepMsg{name: name, branch: b}
 	}
 }
 
@@ -728,7 +724,7 @@ func startBranchStep(b *branch.Branch, name string) tea.Cmd {
 		if err := startBranchWithProgress(b, name); err != nil {
 			return operationErrMsg{err}
 		}
-		return createStepMsg{name: name, branch: b, step: 2}
+		return branchStartedMsg{name: name}
 	}
 }
 

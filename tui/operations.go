@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"os/exec"
+	"runtime"
+	"strings"
 
 	"github.com/darklang/dark-multi/branch"
 )
@@ -85,4 +87,22 @@ func openVSCode(b *branch.Branch) error {
 	}
 
 	return fmt.Errorf("neither devcontainer CLI nor VS Code found")
+}
+
+// openInBrowser opens a URL in the default browser.
+func openInBrowser(url string) {
+	fullURL := url
+	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+		fullURL = "http://" + url
+	}
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", fullURL)
+	case "linux":
+		cmd = exec.Command("xdg-open", fullURL)
+	default:
+		return
+	}
+	cmd.Start()
 }

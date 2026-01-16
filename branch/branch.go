@@ -127,6 +127,29 @@ func (b *Branch) HasChanges() bool {
 	return err == nil && len(strings.TrimSpace(string(out))) > 0
 }
 
+// GitStatus returns modified and untracked file counts.
+func (b *Branch) GitStatus() (modified int, untracked int) {
+	if !b.Exists() {
+		return 0, 0
+	}
+	cmd := exec.Command("git", "-C", b.Path, "status", "--porcelain")
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, 0
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "??") {
+			untracked++
+		} else {
+			modified++
+		}
+	}
+	return modified, untracked
+}
+
 // GitStats returns commits ahead of origin/main and total lines added/removed (committed + uncommitted).
 func (b *Branch) GitStats() (commits int, added int, removed int) {
 	if !b.Exists() || b.Name == "main" {

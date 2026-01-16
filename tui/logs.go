@@ -96,9 +96,9 @@ func (m LogViewerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case "esc", "backspace", "h", "left":
-			// Back to branch detail
-			detail := NewBranchDetailModel(m.branch)
-			return detail, detail.Init()
+			// Back to grid
+			grid := NewGridModel()
+			return grid, grid.Init()
 
 		case "up", "k":
 			if m.cursor > 0 {

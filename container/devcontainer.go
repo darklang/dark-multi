@@ -213,6 +213,23 @@ func GenerateOverrideConfig(b BranchInfo) (string, error) {
 		cfg["postCreateCommand"] = postCreate
 	}
 
+	// Inject OAuth token if available (from ~/.config/dark-multi/oauth_token)
+	// Combined with mounted ~/.claude.json (which has hasCompletedOnboarding: true),
+	// this enables auto-auth without /login
+	oauthTokenPath := filepath.Join(config.ConfigDir, "oauth_token")
+	if tokenBytes, err := os.ReadFile(oauthTokenPath); err == nil {
+		token := strings.TrimSpace(string(tokenBytes))
+		if token != "" {
+			containerEnv, _ := cfg["containerEnv"].(map[string]interface{})
+			if containerEnv == nil {
+				containerEnv = make(map[string]interface{})
+			}
+			containerEnv["CLAUDE_CODE_OAUTH_TOKEN"] = token
+			cfg["containerEnv"] = containerEnv
+			logToFile("Injecting CLAUDE_CODE_OAUTH_TOKEN from %s", oauthTokenPath)
+		}
+	}
+
 	// Write merged config
 	output, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {

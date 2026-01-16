@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -41,7 +40,6 @@ type GridInputMode int
 const (
 	GridInputNone GridInputMode = iota
 	GridInputNewBranch
-	GridInputClaudePrompt
 	GridInputConfirmDelete
 )
 
@@ -54,28 +52,21 @@ type GridModel struct {
 	height         int
 	message        string
 	err            error
-	inputMode      GridInputMode
-	inputText      string
-	pendingName    string            // branch name being created (for prompt input)
-	claudePrompts  map[string]string // branch name -> initial prompt for Claude
-	proxyRunning   bool
+	inputMode    GridInputMode
+	inputText    string
+	proxyRunning bool
 	loading        bool
 }
 
 // Grid layout messages
 type paneContentMsg map[string]string
 type gridTickMsg time.Time
-type sendClaudePromptMsg struct {
-	branchName string
-	prompt     string
-}
 
 // NewGridModel creates a new grid view.
 func NewGridModel() GridModel {
 	return GridModel{
-		branches:      branch.GetManagedBranches(),
-		paneContent:   make(map[string]string),
-		claudePrompts: make(map[string]string),
+		branches:    branch.GetManagedBranches(),
+		paneContent: make(map[string]string),
 	}
 }
 
@@ -121,34 +112,44 @@ func (m GridModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			return m, tea.Quit
 
-		case "left", "h":
+		case "left":
 			if m.cursor > 0 {
 				m.cursor--
 			}
 
-		case "right", "l":
+		case "right":
 			if m.cursor < len(m.branches)-1 {
 				m.cursor++
 			}
 
-		case "up", "k":
+		case "up":
 			cols := m.numCols()
 			if m.cursor >= cols {
 				m.cursor -= cols
 			}
 
-		case "down", "j":
+		case "down":
 			cols := m.numCols()
 			if m.cursor+cols < len(m.branches) {
 				m.cursor += cols
 			}
 
 		case "enter":
-			// Go to branch detail view
+			// Open Claude for selected branch (same as 'c')
 			if len(m.branches) > 0 && m.cursor < len(m.branches) {
 				b := m.branches[m.cursor]
-				detail := NewBranchDetailModel(b)
-				return detail, detail.Init()
+				if b.IsRunning() {
+					containerID, err := b.ContainerID()
+					if err != nil {
+						m.message = fmt.Sprintf("Error: %v", err)
+						return m, nil
+					}
+					if err := tmux.OpenClaude(b.Name, containerID); err != nil {
+						m.message = fmt.Sprintf("Error: %v", err)
+					}
+				} else {
+					m.message = fmt.Sprintf("%s is stopped - press 's' to start", b.Name)
+				}
 			}
 
 		case "t":
@@ -198,8 +199,8 @@ func (m GridModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		case "K":
-			// Kill selected branch (capital K to avoid conflict with up)
+		case "k":
+			// Kill (stop) selected branch
 			if len(m.branches) > 0 && m.cursor < len(m.branches) {
 				b := m.branches[m.cursor]
 				if b.IsRunning() {
@@ -245,20 +246,12 @@ func (m GridModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.openDiff(b)
 			}
 
-		case "a":
-			// Auth Claude - kill any stuck tmux session first
+		case "l":
+			// View logs
 			if len(m.branches) > 0 && m.cursor < len(m.branches) {
 				b := m.branches[m.cursor]
-				if !b.IsRunning() {
-					m.message = "Start the branch first"
-					return m, nil
-				}
-				// Kill existing tmux session if stuck on theme prompt or other bad state
-				if tmux.BranchSessionExists(b.Name) {
-					tmux.KillBranchSession(b.Name)
-				}
-				auth := NewAuthModel(b)
-				return auth, auth.Init()
+				logs := NewLogViewerModel(b)
+				return logs, logs.Init()
 			}
 
 		case "?":
@@ -281,52 +274,20 @@ func (m GridModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.cursor >= len(m.branches) && len(m.branches) > 0 {
 			m.cursor = len(m.branches) - 1
 		}
-		// Note: Don't clean up globalPendingBranches here - let authNeededMsg handle it
-		// to avoid race conditions with the auth check flow
+		// Note: Don't clean up globalPendingBranches here - let branchStartedMsg handle it
 		return m, tea.Batch(m.loadPaneContent, gridTickCmd())
 
 	case createStepMsg:
-		if msg.step == 1 {
-			if pending, ok := globalPendingBranches[msg.name]; ok {
-				pending.Status = "starting container"
-			}
-			return m, startBranchStep(msg.branch, msg.name)
-		}
-		// Step 2: check auth
 		if pending, ok := globalPendingBranches[msg.name]; ok {
-			pending.Status = "checking auth"
+			pending.Status = "starting container"
 		}
-		return m, CheckAuthNeeded(msg.branch)
+		return m, startBranchStep(msg.branch, msg.name)
 
-	case authNeededMsg:
-		delete(globalPendingBranches, msg.branch.Name)
+	case branchStartedMsg:
+		delete(globalPendingBranches, msg.name)
 		m.loading = false
 		m.branches = branch.GetManagedBranches()
-		if msg.needed {
-			auth := NewAuthModel(msg.branch)
-			return auth, auth.Init()
-		}
-		// Auth OK - create tmux session if needed
-		containerID, _ := msg.branch.ContainerID()
-		if containerID != "" && !tmux.BranchSessionExists(msg.branch.Name) {
-			tmux.CreateBranchSession(msg.branch.Name, containerID, msg.branch.Path)
-		}
-		// Check if we have a queued prompt for this branch
-		if prompt, ok := m.claudePrompts[msg.branch.Name]; ok && prompt != "" {
-			delete(m.claudePrompts, msg.branch.Name)
-			// Wait for container to be ready then send prompt
-			return m, tea.Batch(m.loadPaneContent, waitAndSendPrompt(msg.branch.Name, prompt))
-		}
 		return m, m.loadPaneContent
-
-	case sendClaudePromptMsg:
-		// Send the prompt to Claude
-		if err := tmux.SendToClaudePane(msg.branchName, msg.prompt); err != nil {
-			m.message = fmt.Sprintf("Error sending prompt: %v", err)
-		} else {
-			m.message = fmt.Sprintf("Sent prompt to %s", msg.branchName)
-		}
-		return m, nil
 
 	case operationDoneMsg:
 		m.message = msg.message
@@ -360,10 +321,16 @@ func (m GridModel) handleInputMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			name := m.inputText
-			m.pendingName = name
+			m.inputMode = GridInputNone
 			m.inputText = ""
-			m.inputMode = GridInputClaudePrompt // Switch to prompt input
-			return m, nil
+			m.loading = true
+			b := branch.New(name)
+			if b.Exists() {
+				globalPendingBranches[name] = &PendingBranch{Name: name, Status: "starting container"}
+			} else {
+				globalPendingBranches[name] = &PendingBranch{Name: name, Status: "cloning from GitHub"}
+			}
+			return m, m.createAndStartBranch(name)
 
 		case "esc":
 			m.inputMode = GridInputNone
@@ -380,50 +347,6 @@ func (m GridModel) handleInputMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			key := msg.String()
 			if len(key) == 1 && isValidBranchChar(key[0]) {
 				m.inputText += key
-			}
-			return m, nil
-		}
-
-	case GridInputClaudePrompt:
-		switch msg.String() {
-		case "enter":
-			name := m.pendingName
-			prompt := m.inputText
-			if prompt != "" {
-				m.claudePrompts[name] = prompt
-			}
-			m.inputMode = GridInputNone
-			m.inputText = ""
-			m.pendingName = ""
-			m.loading = true
-			b := branch.New(name)
-			if b.Exists() {
-				globalPendingBranches[name] = &PendingBranch{Name: name, Status: "starting container"}
-			} else {
-				globalPendingBranches[name] = &PendingBranch{Name: name, Status: "cloning from GitHub"}
-			}
-			return m, m.createAndStartBranch(name)
-
-		case "esc":
-			// Cancel the whole operation
-			m.inputMode = GridInputNone
-			m.inputText = ""
-			m.pendingName = ""
-			return m, nil
-
-		case "backspace":
-			if len(m.inputText) > 0 {
-				m.inputText = m.inputText[:len(m.inputText)-1]
-			}
-			return m, nil
-
-		default:
-			// Allow any printable character for the prompt
-			key := msg.String()
-			if len(key) == 1 {
-				m.inputText += key
-			} else if key == "space" {
-				m.inputText += " "
 			}
 			return m, nil
 		}
@@ -493,19 +416,7 @@ func (m GridModel) View() string {
 		b.WriteString(selectedStyle.Render("Name: "))
 		b.WriteString(m.inputText)
 		b.WriteString("█\n\n")
-		b.WriteString(helpStyle.Render("[enter] continue  [esc] cancel"))
-		return b.String()
-	}
-
-	if m.inputMode == GridInputClaudePrompt {
-		b.WriteString(titleStyle.Render(fmt.Sprintf("NEW BRANCH: %s", m.pendingName)))
-		b.WriteString("\n\n")
-		b.WriteString(helpStyle.Render("Container will start building. Enter a prompt for Claude:\n"))
-		b.WriteString(helpStyle.Render("(leave empty to skip, or type your task)\n\n"))
-		b.WriteString(selectedStyle.Render("Prompt: "))
-		b.WriteString(m.inputText)
-		b.WriteString("█\n\n")
-		b.WriteString(helpStyle.Render("[enter] start  [esc] cancel"))
+		b.WriteString(helpStyle.Render("[enter] create  [esc] cancel"))
 		return b.String()
 	}
 
@@ -544,8 +455,8 @@ func (m GridModel) View() string {
 		height = 40
 	}
 
-	// Reserve 2 lines for status bar and help
-	cellHeight := (height - 2) / 2
+	// Reserve 4 lines for status bar, newline, and help/message
+	cellHeight := (height - 4) / 2
 
 	// Build rows (2 rows)
 	var rows []string
@@ -587,7 +498,7 @@ func (m GridModel) View() string {
 	} else if m.message != "" {
 		b.WriteString(m.message)
 	} else {
-		b.WriteString(helpStyle.Render("[n]ew [x]del [s]tart [K]ill [a]uth [d]iff [t]mux [c]ode [m]atter [?]help [q]uit"))
+		b.WriteString(helpStyle.Render("[n]ew [x]del [s]tart [k]ill [c]laude [t]erm [e]ditor [l]ogs [d]iff [m]atter [?]help [q]uit"))
 	}
 
 	return b.String()
@@ -633,47 +544,46 @@ func (m GridModel) renderCell(idx int, width, height int) string {
 		return style.Width(innerWidth).Height(innerHeight).Render(header + "\n" + content)
 	}
 
-	// Header
+	// Header with git status
 	var header string
+	statusIcon := stoppedStyle.Render("○")
 	if br.IsRunning() {
-		header = runningStyle.Render("●") + " " + cellHeaderStyle.Render(br.Name)
-	} else {
-		header = stoppedStyle.Render("○") + " " + cellHeaderStyle.Render(br.Name)
+		statusIcon = runningStyle.Render("●")
+	}
+	header = statusIcon + " " + cellHeaderStyle.Render(br.Name)
+
+	// Add git status if there are changes
+	modified, untracked := br.GitStatus()
+	if modified > 0 || untracked > 0 {
+		var parts []string
+		if modified > 0 {
+			parts = append(parts, fmt.Sprintf("%dM", modified))
+		}
+		if untracked > 0 {
+			parts = append(parts, fmt.Sprintf("%d?", untracked))
+		}
+		header += "  " + helpStyle.Render(strings.Join(parts, " "))
 	}
 
 	// Content
 	var content string
 	if br.IsRunning() {
-		// Check if Claude is authenticated (look for oauthAccount in .claude.json)
-		needsAuth := false
-		if containerID, err := br.ContainerID(); err == nil {
-			authCmd := exec.Command("docker", "exec", containerID, "grep", "-q", "oauthAccount", "/home/dark/.claude.json")
-			needsAuth = authCmd.Run() != nil
-		}
-
-		if needsAuth {
-			content = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("[needs auth - press 'a']")
-		} else if !tmux.BranchSessionExists(br.Name) {
-			content = stoppedStyle.Render("[ready - press 't' for terminal]")
+		if !tmux.BranchSessionExists(br.Name) {
+			content = stoppedStyle.Render("[ready - press 'c' for Claude]")
 		} else if pane, ok := m.paneContent[br.Name]; ok && pane != "" {
-			// Check if pane is stuck on theme prompt (bad state)
-			if strings.Contains(pane, "Dark mode") && strings.Contains(pane, "Light mode") {
-				content = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("[auth stuck - press 'a' to fix]")
-			} else {
-				lines := strings.Split(pane, "\n")
-				maxLines := innerHeight - 1
-				if len(lines) > maxLines {
-					lines = lines[len(lines)-maxLines:]
-				}
-				for i, line := range lines {
-					if len(line) > innerWidth {
-						lines[i] = line[:innerWidth-1] + "…"
-					}
-				}
-				content = strings.Join(lines, "\n")
+			lines := strings.Split(pane, "\n")
+			maxLines := innerHeight - 1
+			if len(lines) > maxLines {
+				lines = lines[len(lines)-maxLines:]
 			}
+			for i, line := range lines {
+				if len(line) > innerWidth {
+					lines[i] = line[:innerWidth-1] + "…"
+				}
+			}
+			content = strings.Join(lines, "\n")
 		} else {
-			content = stoppedStyle.Render("[capturing...]")
+			content = stoppedStyle.Render("[Claude session active]")
 		}
 	} else {
 		content = cellStoppedStyle.Render("[stopped]")
@@ -743,7 +653,7 @@ func (m GridModel) createAndStartBranch(name string) tea.Cmd {
 		if err != nil {
 			return operationErrMsg{err}
 		}
-		return createStepMsg{name: name, branch: b, step: 1}
+		return createStepMsg{name: name, branch: b}
 	}
 }
 
@@ -753,25 +663,5 @@ func (m GridModel) removeBranch(b *branch.Branch) tea.Cmd {
 			return operationErrMsg{err}
 		}
 		return operationDoneMsg{fmt.Sprintf("Removed %s", b.Name)}
-	}
-}
-
-// waitAndSendPrompt waits for a branch to be ready, then sends a prompt to Claude.
-func waitAndSendPrompt(branchName string, prompt string) tea.Cmd {
-	return func() tea.Msg {
-		b := branch.New(branchName)
-		// Wait up to 10 minutes for the container to be ready
-		maxWait := 600
-		for i := 0; i < maxWait; i++ {
-			status := b.GetStartupStatus()
-			if status.Phase == branch.PhaseReady {
-				// Give Claude a moment to fully initialize
-				time.Sleep(3 * time.Second)
-				return sendClaudePromptMsg{branchName: branchName, prompt: prompt}
-			}
-			time.Sleep(1 * time.Second)
-		}
-		// Timeout - try sending anyway
-		return sendClaudePromptMsg{branchName: branchName, prompt: prompt}
 	}
 }
