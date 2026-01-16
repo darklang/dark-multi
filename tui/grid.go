@@ -231,7 +231,7 @@ func (m GridModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if b.IsRunning() {
 					m.message = fmt.Sprintf("%s is already running", b.Name)
 				} else {
-					m.message = fmt.Sprintf("Starting %s...", b.Name)
+					globalPendingBranches[b.Name] = &PendingBranch{Name: b.Name, Status: "starting container"}
 					m.loading = true
 					return m, m.startBranch(b)
 				}
@@ -343,6 +343,12 @@ func (m GridModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.message = msg.message
 		m.loading = false
 		m.branches = branch.GetManagedBranches()
+		// Clean up any pending branches that are now running
+		for _, b := range m.branches {
+			if b.IsRunning() {
+				delete(globalPendingBranches, b.Name)
+			}
+		}
 		return m, m.loadPaneContent
 
 	case operationErrMsg:
@@ -619,6 +625,30 @@ func (m GridModel) renderCell(idx int, width, height int) string {
 	if pending, ok := globalPendingBranches[br.Name]; ok {
 		// Show pending status instead of normal content
 		header := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("◐") + " " + cellHeaderStyle.Render(br.Name)
+
+		// Show CPU/RAM stats if container is already running (even during setup)
+		if stats, ok := m.containerStats[br.Name]; ok {
+			cpuCores, ramGB := config.GetSystemResources()
+			var cpuPct float64
+			fmt.Sscanf(strings.TrimSuffix(stats.CPU, "%"), "%f", &cpuPct)
+			hostCpuPct := cpuPct / float64(cpuCores)
+			mem := stats.Memory
+			var memMB float64
+			if strings.HasSuffix(mem, "GiB") {
+				var v float64
+				fmt.Sscanf(strings.TrimSuffix(mem, "GiB"), "%f", &v)
+				memMB = v * 1024
+			} else if strings.HasSuffix(mem, "MiB") {
+				fmt.Sscanf(strings.TrimSuffix(mem, "MiB"), "%f", &memMB)
+			}
+			memPct := memMB / (float64(ramGB) * 1024) * 100
+			memStr := fmt.Sprintf("%.0fMB", memMB)
+			if memMB >= 1024 {
+				memStr = fmt.Sprintf("%.1fGB", memMB/1024)
+			}
+			header += helpStyle.Render(fmt.Sprintf(", CPU: %.0f%%, RAM: %s/%.0f%%", hostCpuPct, memStr, memPct))
+		}
+
 		content := helpStyle.Render(pending.Status)
 		style := cellBorderStyle
 		if selected {
@@ -705,6 +735,30 @@ func (m GridModel) renderPendingCell(pb *PendingBranch, width, height int) strin
 	innerHeight := height - 2
 
 	header := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("◐") + " " + cellHeaderStyle.Render(pb.Name)
+
+	// Show CPU/RAM stats if container is running (during setup phases)
+	if stats, ok := m.containerStats[pb.Name]; ok {
+		cpuCores, ramGB := config.GetSystemResources()
+		var cpuPct float64
+		fmt.Sscanf(strings.TrimSuffix(stats.CPU, "%"), "%f", &cpuPct)
+		hostCpuPct := cpuPct / float64(cpuCores)
+		mem := stats.Memory
+		var memMB float64
+		if strings.HasSuffix(mem, "GiB") {
+			var v float64
+			fmt.Sscanf(strings.TrimSuffix(mem, "GiB"), "%f", &v)
+			memMB = v * 1024
+		} else if strings.HasSuffix(mem, "MiB") {
+			fmt.Sscanf(strings.TrimSuffix(mem, "MiB"), "%f", &memMB)
+		}
+		memPct := memMB / (float64(ramGB) * 1024) * 100
+		memStr := fmt.Sprintf("%.0fMB", memMB)
+		if memMB >= 1024 {
+			memStr = fmt.Sprintf("%.1fGB", memMB/1024)
+		}
+		header += helpStyle.Render(fmt.Sprintf(", CPU: %.0f%%, RAM: %s/%.0f%%", hostCpuPct, memStr, memPct))
+	}
+
 	content := helpStyle.Render(pb.Status)
 
 	return cellBorderStyle.Width(innerWidth).Height(innerHeight).Render(header + "\n" + content)

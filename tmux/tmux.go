@@ -51,7 +51,7 @@ func OpenClaude(branchName, containerID string) error {
 		// Start bash in container, then run claude
 		dockerBash := fmt.Sprintf("docker exec -it -w /home/dark/app %s bash", containerID)
 		exec.Command("tmux", "send-keys", "-t", session, dockerBash, "Enter").Run()
-		exec.Command("tmux", "send-keys", "-t", session, "sleep 1 && claude", "Enter").Run()
+		exec.Command("tmux", "send-keys", "-t", session, "sleep 1 && claude --dangerously-skip-permissions", "Enter").Run()
 	}
 
 	return openInTerminal(session)
@@ -246,7 +246,7 @@ func CreateBranchSession(branchName string, containerID string, branchPath strin
 	exec.Command("tmux", "set-option", "-t", session, "-g", "mouse", "on").Run()
 	dockerBash := fmt.Sprintf("docker exec -it -w /home/dark/app %s bash", containerID)
 	exec.Command("tmux", "send-keys", "-t", session, dockerBash, "Enter").Run()
-	exec.Command("tmux", "send-keys", "-t", session, "sleep 1 && claude", "Enter").Run()
+	exec.Command("tmux", "send-keys", "-t", session, "sleep 1 && claude --dangerously-skip-permissions", "Enter").Run()
 	return nil
 }
 

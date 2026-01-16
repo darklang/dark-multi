@@ -180,35 +180,35 @@ func parseDevcontainerLine(line string, stepRegex *regexp.Regexp, branchName str
 	lower := strings.ToLower(line)
 	var status string
 
-	// Dark-specific build phases (from postStartCommand output)
+	// Devcontainer lifecycle phases FIRST (these lines may contain metadata with misleading strings)
 	switch {
-	case strings.Contains(lower, "tree-sitter") || strings.Contains(lower, "tree_sitter"):
-		status = "building tree-sitter"
-	case strings.Contains(lower, "dotnet build") || strings.Contains(lower, "fsdark.sln"):
-		status = "building F#"
-	case strings.Contains(lower, "dotnet restore"):
-		status = "restoring packages"
-	case strings.Contains(lower, "build-server"):
-		status = "starting build server"
-	case strings.Contains(lower, "shipit ready") || strings.Contains(lower, "ready to ship"):
-		status = "ready"
+	case strings.Contains(lower, "pulling from") || strings.Contains(line, "Pull complete"):
+		status = "pulling image"
+	case strings.Contains(lower, "step ") && strings.Contains(lower, "run ") && !strings.Contains(lower, "docker"):
+		status = "building image"
+	case strings.Contains(lower, "start: run: docker run"):
+		status = "creating container"
+	case strings.Contains(lower, "start: run: docker start"):
+		status = "container started"
+	case strings.Contains(lower, "running the postcreatecommand"):
+		status = "post-create setup"
+	case strings.Contains(lower, "running the poststartcommand"):
+		status = "post-start setup"
 	}
 
-	// Devcontainer lifecycle phases (be specific to avoid false matches)
+	// Dark-specific build phases (from postStartCommand output) - only if not a lifecycle phase
 	if status == "" {
 		switch {
-		case strings.Contains(lower, "pulling from") || strings.Contains(line, "Pull complete"):
-			status = "pulling image"
-		case strings.Contains(lower, "step ") && strings.Contains(lower, "run "):
-			status = "building image"
-		case strings.Contains(lower, "creating container") || strings.Contains(lower, "start container"):
-			status = "creating container"
-		case strings.Contains(lower, "container started") || strings.Contains(lower, "starting container"):
-			status = "container started"
-		case strings.Contains(lower, "running the postcreatecommand"):
-			status = "post-create setup"
-		case strings.Contains(lower, "running the poststartcommand"):
-			status = "post-start setup"
+		case strings.Contains(lower, "tree-sitter") || strings.Contains(lower, "tree_sitter"):
+			status = "building tree-sitter"
+		case strings.Contains(lower, "dotnet build") || (strings.Contains(lower, "fsdark.sln") && !strings.Contains(lower, "docker")):
+			status = "building F#"
+		case strings.Contains(lower, "dotnet restore"):
+			status = "restoring packages"
+		case strings.Contains(lower, "build-server"):
+			status = "starting build server"
+		case strings.Contains(lower, "shipit ready") || strings.Contains(lower, "ready to ship"):
+			status = "ready"
 		}
 	}
 
