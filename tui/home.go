@@ -40,23 +40,22 @@ type PendingBranch struct {
 
 // HomeModel is the main TUI model.
 type HomeModel struct {
-	branches       []*branch.Branch
+	branches        []*branch.Branch
 	pendingBranches map[string]*PendingBranch // branches being created
-	claudeStatus   map[string]*claude.Status
-	gitStats       map[string]*GitStatsInfo
-	startupStatus  map[string]*branch.StartupStatus
-	cursor         int
-	proxyRunning   bool
-	apiKeyMissing  bool
-	width          int
-	height         int
-	message        string
-	err            error
-	quitting       bool
-	loading        bool
-	inputMode      InputMode
-	inputText      string
-	spinner        spinner.Model
+	claudeStatus    map[string]*claude.Status
+	gitStats        map[string]*GitStatsInfo
+	startupStatus   map[string]*branch.StartupStatus
+	cursor          int
+	proxyRunning    bool
+	width           int
+	height          int
+	message         string
+	err             error
+	quitting        bool
+	loading         bool
+	inputMode       InputMode
+	inputText       string
+	spinner         spinner.Model
 }
 
 // Messages
@@ -86,7 +85,6 @@ func NewHomeModel() HomeModel {
 	return HomeModel{
 		loading:         true,
 		spinner:         s,
-		apiKeyMissing:   config.GetAnthropicAPIKey() == "",
 		pendingBranches: make(map[string]*PendingBranch),
 	}
 }
@@ -294,6 +292,18 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
+		case "a":
+			// Auth Claude for selected branch
+			if len(m.branches) > 0 {
+				b := m.branches[m.cursor]
+				if !b.IsRunning() {
+					m.message = "Start the branch first"
+					return m, nil
+				}
+				auth := NewAuthModel(b)
+				return auth, auth.Init()
+			}
+
 		case "?":
 			// Show help
 			return NewHelpModel(), nil
@@ -340,9 +350,22 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, startBranchStep(msg.branch, msg.name)
 		}
-		// Step 2: all done
-		delete(m.pendingBranches, msg.name)
+		// Step 2: container started, check if auth needed
+		if pending, ok := m.pendingBranches[msg.name]; ok {
+			pending.Status = "checking auth"
+		}
+		return m, CheckAuthNeeded(msg.branch)
+
+	case authNeededMsg:
+		// Remove from pending
+		delete(m.pendingBranches, msg.branch.Name)
 		m.loading = false
+		if msg.needed {
+			// Auth needed - transition to auth view
+			auth := NewAuthModel(msg.branch)
+			return auth, auth.Init()
+		}
+		// No auth needed - done
 		return m, tea.Batch(loadBranches, checkProxyStatus)
 
 	case operationDoneMsg:
@@ -367,8 +390,8 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 
 	default:
-		// Handle spinner updates
-		if m.loading {
+		// Handle spinner updates when loading or have pending branches
+		if m.loading || len(m.pendingBranches) > 0 {
 			var cmd tea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
 			return m, cmd
@@ -389,14 +412,6 @@ func (m HomeModel) View() string {
 	// Title
 	b.WriteString(titleStyle.Render("DARK MULTI"))
 	b.WriteString("\n\n")
-
-	// API key warning
-	if m.apiKeyMissing {
-		b.WriteString(errorStyle.Render("⚠ ANTHROPIC_API_KEY not set - Claude won't work in containers"))
-		b.WriteString("\n")
-		b.WriteString(helpStyle.Render("  Set env var or create ~/.config/dark-multi/anthropic-api-key"))
-		b.WriteString("\n\n")
-	}
 
 	// Branches (including pending ones)
 	if len(m.branches) == 0 && len(m.pendingBranches) == 0 {
@@ -498,7 +513,7 @@ func (m HomeModel) View() string {
 			indicator := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("◐")
 			name := fmt.Sprintf("%-*s", maxLen, pb.Name)
 			status := " " + helpStyle.Render(pb.Status)
-			b.WriteString(fmt.Sprintf("  %s %s%s %s\n", indicator, name, status, m.spinner.View()))
+			b.WriteString(fmt.Sprintf("  %s %s%s\n", indicator, name, status))
 		}
 	}
 
@@ -561,7 +576,7 @@ func (m HomeModel) View() string {
 	}
 
 	// Help
-	b.WriteString(helpStyle.Render("[n]ew  [x]del  [s]tart  [k]ill  [d]iff  [g]rid  [t]mux  [c]ode  [p]roxy  [?]  [q]uit"))
+	b.WriteString(helpStyle.Render("[n]ew  [x]del  [s]tart  [k]ill  [a]uth  [d]iff  [g]rid  [t]mux  [c]ode  [p]roxy  [?]  [q]uit"))
 	b.WriteString("\n")
 
 	return b.String()

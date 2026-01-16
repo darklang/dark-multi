@@ -62,6 +62,7 @@ func (m HelpModel) View() string {
 	b.WriteString("  x           Delete branch (with confirmation)\n")
 	b.WriteString("  s           Start branch\n")
 	b.WriteString("  k           Kill (stop) branch\n")
+	b.WriteString("  a           Auth Claude (run once per new container)\n")
 	b.WriteString("  d           Diff (open gitk)\n")
 	b.WriteString("  t           Open terminal (CLI + claude panes)\n")
 	b.WriteString("  c           Open VS Code\n")
