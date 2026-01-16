@@ -9,7 +9,19 @@ import (
 
 // startBranchFull starts a branch container and sets up tmux.
 func startBranchFull(b *branch.Branch) error {
-	return branch.Start(b)
+	return startBranchWithProgress(b, "")
+}
+
+// startBranchWithProgress starts with progress updates to globalPendingBranches.
+func startBranchWithProgress(b *branch.Branch, name string) error {
+	if name == "" {
+		name = b.Name
+	}
+	return branch.StartWithProgress(b, func(status string) {
+		if pending, ok := globalPendingBranches[name]; ok {
+			pending.Status = status
+		}
+	})
 }
 
 // stopBranchFull stops a branch container and cleans up tmux.
@@ -19,7 +31,11 @@ func stopBranchFull(b *branch.Branch) error {
 
 // createBranchFull creates a new branch, cloning from GitHub if needed.
 func createBranchFull(name string) (*branch.Branch, error) {
-	return branch.Create(name)
+	return branch.CreateWithProgress(name, func(status string) {
+		if pending, ok := globalPendingBranches[name]; ok {
+			pending.Status = status
+		}
+	})
 }
 
 // removeBranchFull removes a branch entirely.

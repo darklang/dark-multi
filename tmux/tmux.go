@@ -10,76 +10,98 @@ import (
 	"github.com/darklang/dark-multi/config"
 )
 
+// Session types
+const (
+	SessionClaude   = "claude"
+	SessionTerminal = "term"
+)
+
 // IsAvailable returns true if tmux is installed.
 func IsAvailable() bool {
 	_, err := exec.LookPath("tmux")
 	return err == nil
 }
 
-// BranchSessionName returns the tmux session name for a branch.
-func BranchSessionName(branchName string) string {
-	return fmt.Sprintf("dark-%s", branchName)
+// sessionName returns the tmux session name for a branch and type.
+func sessionName(branchName, sessionType string) string {
+	return fmt.Sprintf("dark-%s-%s", branchName, sessionType)
 }
 
-// BranchSessionExists returns true if the branch's tmux session exists.
-func BranchSessionExists(branchName string) bool {
-	if !IsAvailable() {
-		return false
-	}
-	session := BranchSessionName(branchName)
-	cmd := exec.Command("tmux", "has-session", "-t", session)
+// sessionExists returns true if a session exists.
+func sessionExists(name string) bool {
+	cmd := exec.Command("tmux", "has-session", "-t", name)
 	return cmd.Run() == nil
 }
 
-// CreateBranchSession creates a tmux session for a branch with CLI + claude panes.
-func CreateBranchSession(branchName string, containerID string, branchPath string) error {
+// OpenClaude opens or attaches to the Claude session for a branch.
+func OpenClaude(branchName, containerID string) error {
 	if !IsAvailable() {
 		return fmt.Errorf("tmux not available")
 	}
 
-	session := BranchSessionName(branchName)
+	session := sessionName(branchName, SessionClaude)
 
-	// Kill existing session if present
-	if BranchSessionExists(branchName) {
-		exec.Command("tmux", "kill-session", "-t", session).Run()
+	// Create session if it doesn't exist
+	if !sessionExists(session) {
+		if err := exec.Command("tmux", "new-session", "-d", "-s", session).Run(); err != nil {
+			return fmt.Errorf("failed to create session: %w", err)
+		}
+		exec.Command("tmux", "set-option", "-t", session, "-g", "mouse", "on").Run()
+
+		// Start bash in container, then run claude
+		dockerBash := fmt.Sprintf("docker exec -it -w /home/dark/app %s bash", containerID)
+		exec.Command("tmux", "send-keys", "-t", session, dockerBash, "Enter").Run()
+		exec.Command("tmux", "send-keys", "-t", session, "sleep 1 && claude", "Enter").Run()
 	}
 
-	// Create new session
-	cmd := exec.Command("tmux", "new-session", "-d", "-s", session)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to create session: %w", err)
-	}
-
-	// Enable mouse support
-	exec.Command("tmux", "set-option", "-t", session, "-g", "mouse", "on").Run()
-
-	// Docker exec command (no API key - use OAuth from mounted ~/.claude)
-	dockerExec := fmt.Sprintf("docker exec -it -w /home/dark/app %s", containerID)
-
-	// Left pane: CLI inside container
-	exec.Command("tmux", "send-keys", "-t", session,
-		fmt.Sprintf("%s bash", dockerExec), "Enter").Run()
-
-	// Split and create right pane: run claude (user should auth first with 'a')
-	exec.Command("tmux", "split-window", "-h", "-t", session).Run()
-	exec.Command("tmux", "send-keys", "-t", fmt.Sprintf("%s.1", session),
-		fmt.Sprintf("%s claude", dockerExec), "Enter").Run()
-
-	// Select left pane (CLI)
-	exec.Command("tmux", "select-pane", "-t", fmt.Sprintf("%s.0", session)).Run()
-
-	return nil
+	return openInTerminal(session)
 }
 
-// CapturePaneContent captures the visible content of the Claude pane (pane 1) for a branch.
-// Returns the last `lines` lines of output.
+// OpenTerminal opens or attaches to the terminal session for a branch.
+func OpenTerminal(branchName, containerID string) error {
+	if !IsAvailable() {
+		return fmt.Errorf("tmux not available")
+	}
+
+	session := sessionName(branchName, SessionTerminal)
+
+	// Create session if it doesn't exist
+	if !sessionExists(session) {
+		if err := exec.Command("tmux", "new-session", "-d", "-s", session).Run(); err != nil {
+			return fmt.Errorf("failed to create session: %w", err)
+		}
+		exec.Command("tmux", "set-option", "-t", session, "-g", "mouse", "on").Run()
+
+		// Start bash in container
+		dockerBash := fmt.Sprintf("docker exec -it -w /home/dark/app %s bash", containerID)
+		exec.Command("tmux", "send-keys", "-t", session, dockerBash, "Enter").Run()
+	}
+
+	return openInTerminal(session)
+}
+
+// openInTerminal opens a tmux session in a terminal window.
+// If already attached, focuses the existing window.
+func openInTerminal(session string) error {
+	// Check if already attached
+	out, _ := exec.Command("tmux", "list-clients", "-t", session).Output()
+	if len(strings.TrimSpace(string(out))) > 0 {
+		// Try to focus existing window
+		if focusTerminalByTitle(session) {
+			return nil
+		}
+	}
+
+	return spawnTerminalForSession(session)
+}
+
+// CapturePaneContent captures content from the Claude session for a branch.
 func CapturePaneContent(branchName string, lines int) string {
-	if !BranchSessionExists(branchName) {
+	session := sessionName(branchName, SessionClaude)
+	if !sessionExists(session) {
 		return ""
 	}
-	session := BranchSessionName(branchName)
-	// Capture pane 1 (Claude pane) content
-	cmd := exec.Command("tmux", "capture-pane", "-t", fmt.Sprintf("%s.1", session), "-p", "-S", fmt.Sprintf("-%d", lines))
+	cmd := exec.Command("tmux", "capture-pane", "-t", session, "-p", "-S", fmt.Sprintf("-%d", lines))
 	out, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -87,53 +109,29 @@ func CapturePaneContent(branchName string, lines int) string {
 	return strings.TrimSpace(string(out))
 }
 
-// AttachCommand returns the command to attach to a branch's tmux session.
-func AttachCommand(branchName string) *exec.Cmd {
-	session := BranchSessionName(branchName)
-	return exec.Command("tmux", "attach", "-t", session)
+// SendToClaude sends text to the Claude session for a branch.
+func SendToClaude(branchName string, text string) error {
+	session := sessionName(branchName, SessionClaude)
+	if !sessionExists(session) {
+		return fmt.Errorf("no Claude session for %s", branchName)
+	}
+	return exec.Command("tmux", "send-keys", "-t", session, text, "Enter").Run()
 }
 
-// KillBranchSession kills a branch's tmux session.
-func KillBranchSession(branchName string) error {
-	if BranchSessionExists(branchName) {
-		session := BranchSessionName(branchName)
-		return exec.Command("tmux", "kill-session", "-t", session).Run()
+// KillBranchSessions kills all tmux sessions for a branch.
+func KillBranchSessions(branchName string) error {
+	for _, typ := range []string{SessionClaude, SessionTerminal} {
+		session := sessionName(branchName, typ)
+		if sessionExists(session) {
+			exec.Command("tmux", "kill-session", "-t", session).Run()
+		}
 	}
 	return nil
 }
 
-// BranchHasAttachedClients returns true if branch's session has clients attached.
-func BranchHasAttachedClients(branchName string) bool {
-	if !BranchSessionExists(branchName) {
-		return false
-	}
-	session := BranchSessionName(branchName)
-	out, err := exec.Command("tmux", "list-clients", "-t", session).Output()
-	if err != nil {
-		return false
-	}
-	return len(strings.TrimSpace(string(out))) > 0
-}
-
-// OpenBranchInTerminal opens a branch's tmux session in a terminal window.
-// If already attached somewhere, tries to focus that window.
-// Otherwise spawns a new terminal.
-func OpenBranchInTerminal(branchName string) error {
-	if !BranchSessionExists(branchName) {
-		return fmt.Errorf("no tmux session for %s", branchName)
-	}
-
-	session := BranchSessionName(branchName)
-
-	// If already attached, try to focus the existing window
-	if BranchHasAttachedClients(branchName) {
-		if focusTerminalByTitle(session) {
-			return nil
-		}
-		// Couldn't focus, will spawn new terminal anyway
-	}
-
-	return spawnTerminalForSession(session)
+// ClaudeSessionExists returns true if the Claude session exists for a branch.
+func ClaudeSessionExists(branchName string) bool {
+	return sessionExists(sessionName(branchName, SessionClaude))
 }
 
 // focusTerminalByTitle tries to focus a terminal window by title.
@@ -154,12 +152,6 @@ func focusTerminalByTitle(title string) bool {
 		if exec.Command("wmctrl", "-a", title).Run() == nil {
 			return true
 		}
-	}
-
-	// macOS: try osascript (less reliable for specific windows)
-	if _, err := exec.LookPath("osascript"); err == nil {
-		script := `tell application "System Events" to set frontmost of (first process whose name contains "Terminal" or name contains "iTerm") to true`
-		exec.Command("osascript", "-e", script).Run()
 	}
 
 	return false
@@ -230,34 +222,44 @@ func detectTerminal() string {
 	return "xterm"
 }
 
-// Legacy compatibility - these wrap the new per-branch functions
+// Legacy compatibility
 
-// SessionExists returns true if any dark session exists (legacy).
-func SessionExists() bool {
-	// Check for any dark-* session
-	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
-	if err != nil {
-		return false
+// BranchSessionExists returns true if the Claude session exists (for grid status).
+func BranchSessionExists(branchName string) bool {
+	return ClaudeSessionExists(branchName)
+}
+
+// KillBranchSession kills all sessions for a branch.
+func KillBranchSession(branchName string) error {
+	return KillBranchSessions(branchName)
+}
+
+// CreateBranchSession creates a Claude session (legacy - use OpenClaude instead).
+func CreateBranchSession(branchName string, containerID string, branchPath string) error {
+	session := sessionName(branchName, SessionClaude)
+	if sessionExists(session) {
+		return nil
 	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if strings.HasPrefix(line, "dark-") {
-			return true
-		}
+	if err := exec.Command("tmux", "new-session", "-d", "-s", session).Run(); err != nil {
+		return err
 	}
-	return false
+	exec.Command("tmux", "set-option", "-t", session, "-g", "mouse", "on").Run()
+	dockerBash := fmt.Sprintf("docker exec -it -w /home/dark/app %s bash", containerID)
+	exec.Command("tmux", "send-keys", "-t", session, dockerBash, "Enter").Run()
+	exec.Command("tmux", "send-keys", "-t", session, "sleep 1 && claude", "Enter").Run()
+	return nil
 }
 
-// WindowExists is deprecated - use BranchSessionExists instead.
-func WindowExists(name string) bool {
-	return BranchSessionExists(name)
+// OpenBranchInTerminal opens the Claude session in a terminal (legacy).
+func OpenBranchInTerminal(branchName string) error {
+	session := sessionName(branchName, SessionClaude)
+	if !sessionExists(session) {
+		return fmt.Errorf("no session for %s", branchName)
+	}
+	return openInTerminal(session)
 }
 
-// CreateWindow is deprecated - use CreateBranchSession instead.
-func CreateWindow(name string, containerID string, branchPath string) error {
-	return CreateBranchSession(name, containerID, branchPath)
-}
-
-// KillWindow is deprecated - use KillBranchSession instead.
-func KillWindow(name string) error {
-	return KillBranchSession(name)
+// SendToClaudePane sends text to the Claude session (legacy name).
+func SendToClaudePane(branchName string, text string) error {
+	return SendToClaude(branchName, text)
 }

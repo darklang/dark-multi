@@ -725,7 +725,7 @@ func (m HomeModel) createAndStartBranch(name string) tea.Cmd {
 
 func startBranchStep(b *branch.Branch, name string) tea.Cmd {
 	return func() tea.Msg {
-		if err := startBranchFull(b); err != nil {
+		if err := startBranchWithProgress(b, name); err != nil {
 			return operationErrMsg{err}
 		}
 		return createStepMsg{name: name, branch: b, step: 2}

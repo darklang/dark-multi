@@ -124,9 +124,28 @@ func (m LogViewerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case logRefreshMsg:
-		// Auto-refresh content
-		if m.autoScroll && len(m.logFiles) > 0 {
-			m.content = m.loadLogContent(m.logFiles[m.cursor])
+		// Auto-refresh: check for new log files and update content
+		if m.autoScroll {
+			logsDir := filepath.Join(m.branch.Path, "rundir", "logs")
+			entries, err := os.ReadDir(logsDir)
+			if err == nil {
+				var newFiles []string
+				for _, e := range entries {
+					if !e.IsDir() && strings.HasSuffix(e.Name(), ".log") {
+						newFiles = append(newFiles, e.Name())
+					}
+				}
+				// Update file list if changed
+				if len(newFiles) != len(m.logFiles) {
+					m.logFiles = newFiles
+					if len(newFiles) > 0 && m.cursor >= len(newFiles) {
+						m.cursor = 0
+					}
+				}
+			}
+			if len(m.logFiles) > 0 {
+				m.content = m.loadLogContent(m.logFiles[m.cursor])
+			}
 		}
 		return m, tea.Tick(logRefreshRate, func(t time.Time) tea.Msg {
 			return logRefreshMsg(t)
@@ -150,8 +169,16 @@ func (m LogViewerModel) View() string {
 	b.WriteString("\n\n")
 
 	if len(m.logFiles) == 0 {
-		b.WriteString(stoppedStyle.Render("  No log files found in rundir/logs/"))
-		b.WriteString("\n")
+		// Check if container is running (likely still building)
+		if m.branch.IsRunning() {
+			b.WriteString(stoppedStyle.Render("  No log files yet - container is still building."))
+			b.WriteString("\n")
+			b.WriteString(stoppedStyle.Render("  Logs will appear once F# build completes."))
+			b.WriteString("\n")
+		} else {
+			b.WriteString(stoppedStyle.Render("  No log files found - container is stopped."))
+			b.WriteString("\n")
+		}
 	} else {
 		// Two-column layout: file list | log content
 

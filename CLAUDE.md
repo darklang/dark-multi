@@ -110,8 +110,9 @@ n           New branch (type name, enter)
 d           Delete branch (y/n confirm)
 s           Start branch
 k           Kill (stop) branch
-t           Open terminal (tmux)
-c           Open VS Code
+c           Open Claude (persistent tmux session)
+t           Open terminal (persistent tmux session)
+e           Open VS Code (editor)
 m           Open Matter (dark-packages canvas)
 p           Toggle proxy
 enter       View branch details & URLs

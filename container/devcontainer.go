@@ -2,6 +2,8 @@
 package container
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,6 +12,27 @@ import (
 
 	"github.com/darklang/dark-multi/config"
 )
+
+// Pre-built image configuration.
+// When the local Dockerfile matches this hash, we use the pre-built image
+// instead of rebuilding, which saves significant startup time.
+const (
+	// SHA256 hash of the Dockerfile used to build the base image
+	baseDockerfileHash = "83d9d227c58ffdcdb35cb1bfade4626d947007112cc1b4d59223f0031eca4fb2"
+	// Pre-built image on Docker Hub
+	baseImage = "darklang/dark-base:7dc786d"
+)
+
+// logToFile writes debug output to /tmp/dark-multi.log
+func logToFile(format string, args ...interface{}) {
+	f, err := os.OpenFile("/tmp/dark-multi.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	msg := fmt.Sprintf(format, args...)
+	f.WriteString(fmt.Sprintf("[devcontainer] %s\n", msg))
+}
 
 // BranchInfo contains the branch information needed for container operations.
 type BranchInfo interface {
@@ -22,6 +45,25 @@ type BranchInfo interface {
 // GetOverrideConfigPath returns the path to the override config for a branch.
 func GetOverrideConfigPath(name string) string {
 	return filepath.Join(config.ConfigDir, "overrides", name, "devcontainer.json")
+}
+
+// dockerfileMatchesBase checks if the Dockerfile in the branch matches
+// the hash of the Dockerfile used to build the pre-built base image.
+func dockerfileMatchesBase(branchPath string) bool {
+	// Read the Dockerfile - it may be in root or .devcontainer
+	dockerfilePath := filepath.Join(branchPath, "Dockerfile")
+	if _, err := os.Stat(dockerfilePath); os.IsNotExist(err) {
+		dockerfilePath = filepath.Join(branchPath, ".devcontainer", "Dockerfile")
+	}
+
+	content, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		return false // Can't read, fall back to build
+	}
+
+	hash := sha256.Sum256(content)
+	hexHash := hex.EncodeToString(hash[:])
+	return hexHash == baseDockerfileHash
 }
 
 // GenerateOverrideConfig generates a devcontainer override config for a branch.
@@ -89,6 +131,16 @@ func GenerateOverrideConfig(b BranchInfo) (string, error) {
 	cfg["name"] = fmt.Sprintf("dark-%s", name)
 	cfg["forwardPorts"] = hostPorts
 
+	// Use pre-built image if Dockerfile matches base, otherwise build locally
+	if dockerfileMatchesBase(branchPath) {
+		// Remove build section and use pre-built image
+		delete(cfg, "build")
+		cfg["image"] = baseImage
+		logToFile("Using pre-built image: %s", baseImage)
+	} else {
+		logToFile("Dockerfile differs from base - will build locally")
+	}
+
 	// Merge runArgs - filter out existing hostname/label/name/-p args
 	var filteredArgs []string
 	if originalArgs, ok := cfg["runArgs"].([]interface{}); ok {
@@ -132,38 +184,33 @@ func GenerateOverrideConfig(b BranchInfo) (string, error) {
 	// Override mounts with branch-specific volumes
 	homeDir, _ := os.UserHomeDir()
 	claudeDir := filepath.Join(homeDir, ".claude")
+	claudeJson := filepath.Join(homeDir, ".claude.json")
 	cfg["mounts"] = []interface{}{
 		fmt.Sprintf("type=volume,src=dark_nuget_%s,dst=/home/dark/.nuget", name),
 		fmt.Sprintf("type=volume,src=dark-vscode-ext-%s,dst=/home/dark/.vscode-server/extensions", name),
 		fmt.Sprintf("type=volume,src=dark-vscode-ext-insiders-%s,dst=/home/dark/.vscode-server-insiders/extensions", name),
 		// Mount Claude credentials and config (shared across branches)
 		fmt.Sprintf("type=bind,src=%s,dst=/home/dark/.claude,consistency=cached", claudeDir),
+		// Mount .claude.json for auth/theme (writable - Claude needs to save settings)
+		fmt.Sprintf("type=bind,src=%s,dst=/home/dark/.claude.json", claudeJson),
 	}
 
-	// Add Claude installation to postCreateCommand if not already there
+	// Add Claude installation to postCreateCommand
 	postCreate := ""
 	if existing, ok := cfg["postCreateCommand"].(string); ok {
 		postCreate = existing
 	}
+
+	// Ensure Claude is installed (auth comes from mounted .claude.json)
+	claudeInstall := "sudo npm install -g @anthropic-ai/claude-code 2>/dev/null || true"
+
 	if !strings.Contains(postCreate, "claude-code") {
-		// Use sudo since container user doesn't have root perms for global npm
-		claudeInstall := "sudo npm install -g @anthropic-ai/claude-code 2>/dev/null || true"
 		if postCreate != "" {
 			postCreate = claudeInstall + " && " + postCreate
 		} else {
 			postCreate = claudeInstall
 		}
 		cfg["postCreateCommand"] = postCreate
-	}
-
-	// Add ANTHROPIC_API_KEY to container environment if available
-	if apiKey := config.GetAnthropicAPIKey(); apiKey != "" {
-		containerEnv := make(map[string]interface{})
-		if existing, ok := cfg["containerEnv"].(map[string]interface{}); ok {
-			containerEnv = existing
-		}
-		containerEnv["ANTHROPIC_API_KEY"] = apiKey
-		cfg["containerEnv"] = containerEnv
 	}
 
 	// Write merged config

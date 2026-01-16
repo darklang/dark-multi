@@ -289,7 +289,11 @@ func (m BranchDetailModel) View() string {
 
 // Helper to open URL in browser
 func openInBrowser(url string) {
-	fullURL := "http://" + url
+	// Only add http:// if no protocol specified
+	fullURL := url
+	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+		fullURL = "http://" + url
+	}
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
