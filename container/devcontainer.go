@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -32,6 +33,15 @@ func logToFile(format string, args ...interface{}) {
 	defer f.Close()
 	msg := fmt.Sprintf(format, args...)
 	f.WriteString(fmt.Sprintf("[devcontainer] %s\n", msg))
+}
+
+// getGitConfig returns a git config value from the host.
+func getGitConfig(key string) string {
+	out, err := exec.Command("git", "config", "--global", key).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // BranchInfo contains the branch information needed for container operations.
@@ -185,8 +195,6 @@ func GenerateOverrideConfig(b BranchInfo) (string, error) {
 	homeDir, _ := os.UserHomeDir()
 	claudeDir := filepath.Join(homeDir, ".claude")
 	claudeJson := filepath.Join(homeDir, ".claude.json")
-	sshDir := filepath.Join(homeDir, ".ssh")
-	gitconfigPath := filepath.Join(homeDir, ".gitconfig")
 
 	mounts := []interface{}{
 		fmt.Sprintf("type=volume,src=dark_nuget_%s,dst=/home/dark/.nuget", name),
@@ -197,33 +205,41 @@ func GenerateOverrideConfig(b BranchInfo) (string, error) {
 		// Mount .claude.json for auth/theme (writable - Claude needs to save settings)
 		fmt.Sprintf("type=bind,src=%s,dst=/home/dark/.claude.json", claudeJson),
 	}
-
-	// Mount SSH keys for git operations (if they exist)
-	if _, err := os.Stat(sshDir); err == nil {
-		mounts = append(mounts, fmt.Sprintf("type=bind,src=%s,dst=/home/dark/.ssh,readonly", sshDir))
-	}
-
-	// Mount gitconfig for git identity (if it exists)
-	if _, err := os.Stat(gitconfigPath); err == nil {
-		mounts = append(mounts, fmt.Sprintf("type=bind,src=%s,dst=/home/dark/.gitconfig,readonly", gitconfigPath))
-	}
+	// Note: We intentionally do NOT mount ~/.ssh or ~/.gitconfig to avoid leaking credentials.
+	// Git identity (user.name/user.email) is set via postCreateCommand below.
 
 	cfg["mounts"] = mounts
 
-	// Add Claude installation to postCreateCommand
+	// Get git identity from host (just user.name and user.email, no credentials)
+	gitName := getGitConfig("user.name")
+	gitEmail := getGitConfig("user.email")
+
+	// Add Claude installation and git identity to postCreateCommand
 	postCreate := ""
 	if existing, ok := cfg["postCreateCommand"].(string); ok {
 		postCreate = existing
 	}
 
+	// Build setup commands to prepend
+	var setupCmds []string
+
+	// Set git identity (non-secret info only)
+	if gitName != "" {
+		setupCmds = append(setupCmds, fmt.Sprintf("git config --global user.name %q", gitName))
+	}
+	if gitEmail != "" {
+		setupCmds = append(setupCmds, fmt.Sprintf("git config --global user.email %q", gitEmail))
+	}
+
 	// Ensure Claude is installed (auth comes from mounted .claude.json)
-	claudeInstall := "sudo npm install -g @anthropic-ai/claude-code 2>/dev/null || true"
+	setupCmds = append(setupCmds, "sudo npm install -g @anthropic-ai/claude-code 2>/dev/null || true")
 
 	if !strings.Contains(postCreate, "claude-code") {
+		setup := strings.Join(setupCmds, " && ")
 		if postCreate != "" {
-			postCreate = claudeInstall + " && " + postCreate
+			postCreate = setup + " && " + postCreate
 		} else {
-			postCreate = claudeInstall
+			postCreate = setup
 		}
 		cfg["postCreateCommand"] = postCreate
 	}

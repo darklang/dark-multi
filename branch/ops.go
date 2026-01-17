@@ -286,14 +286,22 @@ func CreateWithProgress(name string, onProgress func(status string)) (*Branch, e
 		return nil, fmt.Errorf("GitHub fork not configured. Run: multi set-fork git@github.com:USERNAME/dark.git")
 	}
 
-	cloneCmd := exec.Command("git", "clone", "--progress", source, b.Path)
+	// Clone from GitHub fork directly (faster if no local source, and ensures correct remote)
+	var cloneCmd *exec.Cmd
+	if source != "" {
+		// Clone from local source for speed, then fix remote
+		cloneCmd = exec.Command("git", "clone", "--progress", source, b.Path)
+	} else {
+		// Clone directly from GitHub
+		cloneCmd = exec.Command("git", "clone", "--progress", githubFork, b.Path)
+	}
 	if err := cloneCmd.Run(); err != nil {
 		return nil, fmt.Errorf("clone failed: %w", err)
 	}
 
 	progress("setting up branch")
 
-	// Set remote to configured GitHub fork (cloning from local source sets origin to local path)
+	// Ensure remote points to GitHub fork
 	exec.Command("git", "-C", b.Path, "remote", "set-url", "origin", githubFork).Run()
 
 	exec.Command("git", "-C", b.Path, "fetch", "origin").Run()
