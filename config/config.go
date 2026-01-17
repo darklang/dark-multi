@@ -101,3 +101,26 @@ func GetAnthropicAPIKey() string {
 
 	return ""
 }
+
+// GetGitHubFork returns the GitHub fork URL (e.g., git@github.com:username/dark.git).
+func GetGitHubFork() string {
+	// Check environment first
+	if url := os.Getenv("DARK_GITHUB_FORK"); url != "" {
+		return url
+	}
+
+	// Check config file
+	forkFile := filepath.Join(ConfigDir, "github-fork")
+	if data, err := os.ReadFile(forkFile); err == nil {
+		return strings.TrimSpace(string(data))
+	}
+
+	return ""
+}
+
+// SetGitHubFork saves the GitHub fork URL to config.
+func SetGitHubFork(url string) error {
+	os.MkdirAll(ConfigDir, 0755)
+	forkFile := filepath.Join(ConfigDir, "github-fork")
+	return os.WriteFile(forkFile, []byte(url+"\n"), 0600)
+}

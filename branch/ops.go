@@ -280,12 +280,21 @@ func CreateWithProgress(name string, onProgress func(status string)) (*Branch, e
 	instanceID := FindNextInstanceID()
 	os.MkdirAll(config.DarkRoot, 0755)
 
+	// Check GitHub fork is configured
+	githubFork := config.GetGitHubFork()
+	if githubFork == "" {
+		return nil, fmt.Errorf("GitHub fork not configured. Run: multi set-fork git@github.com:USERNAME/dark.git")
+	}
+
 	cloneCmd := exec.Command("git", "clone", "--progress", source, b.Path)
 	if err := cloneCmd.Run(); err != nil {
 		return nil, fmt.Errorf("clone failed: %w", err)
 	}
 
 	progress("setting up branch")
+
+	// Set remote to configured GitHub fork (cloning from local source sets origin to local path)
+	exec.Command("git", "-C", b.Path, "remote", "set-url", "origin", githubFork).Run()
 
 	exec.Command("git", "-C", b.Path, "fetch", "origin").Run()
 	checkoutCmd := exec.Command("git", "-C", b.Path, "checkout", "-b", name, "origin/main")

@@ -49,6 +49,7 @@ TUI shortcuts:
 	rootCmd.AddCommand(startCmd())
 	rootCmd.AddCommand(stopCmd())
 	rootCmd.AddCommand(rmCmd())
+	rootCmd.AddCommand(setForkCmd())
 
 	return rootCmd
 }
@@ -266,6 +267,41 @@ func rmCmd() *cobra.Command {
 				os.Exit(1)
 			}
 			fmt.Printf("\033[0;32m✓\033[0m Removed %s\n", name)
+		},
+	}
+}
+
+func setForkCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "set-fork <url>",
+		Short: "Set your GitHub fork URL",
+		Long: `Set the GitHub fork URL for your Dark repository.
+
+This is where branches will push to. Use your personal fork:
+  multi set-fork git@github.com:USERNAME/dark.git
+
+Current setting can be viewed with:
+  multi set-fork`,
+		Args: cobra.MaximumNArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			if len(args) == 0 {
+				// Show current setting
+				current := config.GetGitHubFork()
+				if current == "" {
+					fmt.Println("GitHub fork not configured")
+					fmt.Println("Set with: multi set-fork git@github.com:USERNAME/dark.git")
+				} else {
+					fmt.Printf("GitHub fork: %s\n", current)
+				}
+				return
+			}
+
+			url := args[0]
+			if err := config.SetGitHubFork(url); err != nil {
+				fmt.Fprintf(os.Stderr, "\033[0;31merror:\033[0m %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("\033[0;32m✓\033[0m GitHub fork set to: %s\n", url)
 		},
 	}
 }
