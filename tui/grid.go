@@ -55,6 +55,8 @@ type GridModel struct {
 	branches        []*branch.Branch
 	paneContent     map[string]string         // branch name -> captured content
 	containerStats  map[string]ContainerStats // branch name -> stats
+	gitStats        map[string]*GitStatsInfo  // cached git stats
+	runningState    map[string]bool           // cached IsRunning state
 	cursor          int
 	width           int
 	height          int
@@ -69,6 +71,7 @@ type GridModel struct {
 // Grid layout messages
 type paneContentMsg map[string]string
 type containerStatsMsg map[string]ContainerStats
+type runningStateMsg map[string]bool
 type gridTickMsg time.Time
 
 // NewGridModel creates a new grid view.
@@ -77,6 +80,8 @@ func NewGridModel() GridModel {
 		branches:       branch.GetManagedBranches(),
 		paneContent:    make(map[string]string),
 		containerStats: make(map[string]ContainerStats),
+		gitStats:       make(map[string]*GitStatsInfo),
+		runningState:   make(map[string]bool),
 	}
 }
 
@@ -85,9 +90,32 @@ func (m GridModel) Init() tea.Cmd {
 	return tea.Batch(
 		m.loadPaneContent,
 		loadContainerStats,
+		m.loadGridGitStats,
+		m.loadRunningState,
 		checkProxyStatus,
 		gridTickCmd(),
 	)
+}
+
+func (m GridModel) loadRunningState() tea.Msg {
+	state := make(map[string]bool)
+	for _, b := range m.branches {
+		state[b.Name] = b.IsRunning()
+	}
+	return runningStateMsg(state)
+}
+
+func (m GridModel) loadGridGitStats() tea.Msg {
+	stats := make(map[string]*GitStatsInfo)
+	for _, b := range m.branches {
+		commits, added, removed := b.GitStats()
+		stats[b.Name] = &GitStatsInfo{
+			Commits: commits,
+			Added:   added,
+			Removed: removed,
+		}
+	}
+	return gitStatsMsg(stats)
 }
 
 func gridTickCmd() tea.Cmd {
@@ -314,6 +342,14 @@ func (m GridModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case gitStatsMsg:
+		m.gitStats = msg
+		return m, nil
+
+	case runningStateMsg:
+		m.runningState = msg
+		return m, nil
+
 	case proxyStatusMsg:
 		m.proxyRunning = bool(msg)
 		return m, nil
@@ -325,7 +361,7 @@ func (m GridModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = len(m.branches) - 1
 		}
 		// Note: Don't clean up globalPendingBranches here - let branchStartedMsg handle it
-		return m, tea.Batch(m.loadPaneContent, loadContainerStats, gridTickCmd())
+		return m, tea.Batch(m.loadPaneContent, loadContainerStats, m.loadGridGitStats, m.loadRunningState, gridTickCmd())
 
 	case createStepMsg:
 		if pending, ok := globalPendingBranches[msg.name]; ok {
@@ -448,6 +484,14 @@ func (m GridModel) filteredPendingBranches() []*PendingBranch {
 	return result
 }
 
+// isRunning returns cached running state for a branch
+func (m GridModel) isRunning(name string) bool {
+	if running, ok := m.runningState[name]; ok {
+		return running
+	}
+	return false
+}
+
 func (m GridModel) numCols() int {
 	pending := m.filteredPendingBranches()
 	n := len(m.branches) + len(pending)
@@ -565,7 +609,7 @@ func (m GridModel) renderStatusBar() string {
 	cpuCores, ramGB := config.GetSystemResources()
 	running := 0
 	for _, br := range m.branches {
-		if br.IsRunning() {
+		if m.isRunning(br.Name) {
 			running++
 		}
 	}
@@ -660,19 +704,20 @@ func (m GridModel) renderCell(idx int, width, height int) string {
 	// Header with status icon and branch name
 	var header string
 	statusIcon := stoppedStyle.Render("○")
-	if br.IsRunning() {
+	if m.isRunning(br.Name) {
 		statusIcon = runningStyle.Render("●")
 	}
 	header = statusIcon + " " + cellHeaderStyle.Render(br.Name)
 
-	// Add git stats (commits ahead, lines changed)
-	commits, added, removed := br.GitStats()
-	if commits > 0 || added > 0 || removed > 0 {
-		header += helpStyle.Render(fmt.Sprintf(", git: %dc +%d/-%d", commits, added, removed))
+	// Add git stats (commits ahead, lines changed) - use cached values
+	if gs, ok := m.gitStats[br.Name]; ok && gs != nil {
+		if gs.Commits > 0 || gs.Added > 0 || gs.Removed > 0 {
+			header += helpStyle.Render(fmt.Sprintf(", git: %dc +%d/-%d", gs.Commits, gs.Added, gs.Removed))
+		}
 	}
 
 	// Add CPU/RAM stats if running
-	if stats, ok := m.containerStats[br.Name]; ok && br.IsRunning() {
+	if stats, ok := m.containerStats[br.Name]; ok && m.isRunning(br.Name) {
 		cpuCores, ramGB := config.GetSystemResources()
 		// Convert CPU percentage to % of total host CPU
 		var cpuPct float64
@@ -698,7 +743,7 @@ func (m GridModel) renderCell(idx int, width, height int) string {
 
 	// Content
 	var content string
-	if br.IsRunning() {
+	if m.isRunning(br.Name) {
 		if !tmux.BranchSessionExists(br.Name) {
 			content = stoppedStyle.Render("[ready - press 'c' for Claude]")
 		} else if pane, ok := m.paneContent[br.Name]; ok && pane != "" {
