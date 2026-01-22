@@ -60,9 +60,9 @@ func (t *Task) planningContext() string {
 		"   echo \"ready\" > .claude-task/phase\n" +
 		"   ```\n" +
 		"   This signals the TUI that you're done planning.\n\n" +
-		"4. Tell the user: \"Planning complete. Review .claude-task/todos.md, then press 'r' in multi to start the Ralph loop.\"\n\n" +
+		"4. Tell the user: \"Planning complete. Review .claude-task/todos.md. Execution will start automatically.\"\n\n" +
 		"## What happens next\n\n" +
-		"After user approves, the Ralph loop will:\n" +
+		"The automated loop will:\n" +
 		"- Run you repeatedly until all todos are done\n" +
 		"- You read CLAUDE.md and .claude-task/todos.md each iteration\n" +
 		"- Mark todos as [x] when complete\n" +
@@ -93,11 +93,10 @@ func (t *Task) readyContext() string {
 		"## Current Todos\n\n" +
 		todosContent + "\n\n" +
 		"## Status\n\n" +
-		"Waiting for user to:\n" +
-		"1. Review `.claude-task/todos.md`\n" +
-		"2. Give feedback or approve\n" +
-		"3. Press 'r' in multi to start the Ralph loop\n\n" +
-		"You can discuss the plan with the user now.\n\n" +
+		"Waiting for:\n" +
+		"1. User review of `.claude-task/todos.md`\n" +
+		"2. Automated execution to start (queue processor handles this)\n\n" +
+		"You can discuss the plan with the user while waiting.\n\n" +
 		"<!-- TASK CONTEXT END -->\n\n"
 }
 
@@ -112,8 +111,8 @@ func (t *Task) executingContext() string {
 	}
 
 	return "<!-- TASK CONTEXT START -->\n" +
-		"# Active Task - Executing Phase (Ralph Loop)\n\n" +
-		"You are in a Ralph Wiggum loop. Work through the todos systematically.\n\n" +
+		"# Active Task - Executing Phase\n\n" +
+		"You are in an automated execution loop. Work through the todos systematically.\n\n" +
 		"## The Task\n\n" +
 		prePrompt + "\n\n" +
 		"## Current Todos\n\n" +

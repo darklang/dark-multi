@@ -419,13 +419,6 @@ func (m GridModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				})
 			}
 
-		case "r":
-			// Resume/restart loop
-			if len(m.branches) > 0 && m.cursor < len(m.branches) {
-				b := m.branches[m.cursor]
-				return m, m.resumeTask(b)
-			}
-
 		case "f":
 			// Cycle through filter options
 			m.statusFilter = m.nextFilter()
@@ -773,7 +766,7 @@ func (m GridModel) View() string {
 	} else if m.message != "" {
 		b.WriteString(m.message)
 	} else {
-		b.WriteString(helpStyle.Render("[n]ew [x]del [s]tart [k]ill [c]laude [t]erm [p]rompt [r]alph [f]ilter [?] [q]"))
+		b.WriteString(helpStyle.Render("[n]ew [x]del [s]tart [k]ill [c]laude [t]erm [p]rompt [f]ilter [?] [q]"))
 	}
 
 	return b.String()
@@ -1059,48 +1052,6 @@ func (m GridModel) removeBranch(b *branch.Branch) tea.Cmd {
 			return operationErrMsg{err}
 		}
 		return operationDoneMsg{fmt.Sprintf("Removed %s", b.Name)}
-	}
-}
-
-// Task-related commands
-
-func (m GridModel) resumeTask(b *branch.Branch) tea.Cmd {
-	return func() tea.Msg {
-		if !b.IsRunning() {
-			return operationErrMsg{fmt.Errorf("%s is stopped - press 's' to start first", b.Name)}
-		}
-
-		t := task.New(b.Name, b.Path)
-		phase := t.Phase()
-
-		if phase == task.PhaseNone {
-			return operationErrMsg{fmt.Errorf("no task defined - press 'p' to set pre-prompt")}
-		}
-
-		if phase == task.PhaseDone {
-			return operationDoneMsg{"Task already complete! Push your changes."}
-		}
-
-		// Set phase to executing and copy ralph script
-		t.SetPhase(task.PhaseExecuting)
-		if err := t.CopyLoopScript(); err != nil {
-			return operationErrMsg{fmt.Errorf("failed to copy loop script: %w", err)}
-		}
-		if err := t.InjectTaskContext(); err != nil {
-			return operationErrMsg{fmt.Errorf("failed to inject context: %w", err)}
-		}
-
-		// Get container ID and start the Ralph loop
-		containerID, err := b.ContainerID()
-		if err != nil {
-			return operationErrMsg{fmt.Errorf("failed to get container ID: %w", err)}
-		}
-
-		if err := tmux.StartRalphLoop(b.Name, containerID); err != nil {
-			return operationErrMsg{fmt.Errorf("failed to start Ralph loop: %w", err)}
-		}
-
-		return operationDoneMsg{fmt.Sprintf("Ralph loop started for %s", b.Name)}
 	}
 }
 
