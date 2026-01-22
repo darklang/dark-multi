@@ -2,7 +2,6 @@ package branch
 
 import (
 	"bufio"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -24,43 +23,6 @@ func logToFile(format string, args ...interface{}) {
 	defer f.Close()
 	msg := fmt.Sprintf(format, args...)
 	f.WriteString(fmt.Sprintf("[branch] %s\n", msg))
-}
-
-// ensureClaudeSettings ensures ~/.claude/settings.json has theme set on the host
-// This prevents Claude from showing the theme selection prompt on first run
-func ensureClaudeSettings() {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return
-	}
-
-	claudeDir := filepath.Join(homeDir, ".claude")
-	settingsPath := filepath.Join(claudeDir, "settings.json")
-
-	// Create directory if needed
-	os.MkdirAll(claudeDir, 0755)
-
-	// Read existing settings or start fresh
-	var settings map[string]interface{}
-	if data, err := os.ReadFile(settingsPath); err == nil {
-		json.Unmarshal(data, &settings)
-	}
-	if settings == nil {
-		settings = make(map[string]interface{})
-	}
-
-	// Check if theme is already set
-	if _, ok := settings["theme"]; ok {
-		return // Theme already configured
-	}
-
-	// Add theme setting
-	settings["theme"] = "dark"
-
-	// Write back
-	if data, err := json.MarshalIndent(settings, "", "  "); err == nil {
-		os.WriteFile(settingsPath, data, 0644)
-	}
 }
 
 // Start starts a branch container and sets up tmux.
@@ -91,10 +53,6 @@ func StartWithProgress(b *Branch, onProgress func(status string)) error {
 
 	// Reset progress tracking for fresh start
 	ResetProgressLevel(b.Name)
-
-	// Ensure Claude settings exist on host (we mount ~/.claude into containers)
-	// This prevents the theme selection prompt from appearing
-	ensureClaudeSettings()
 
 	progress("preparing container")
 
