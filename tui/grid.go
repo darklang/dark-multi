@@ -11,6 +11,7 @@ import (
 
 	"github.com/darklang/dark-multi/branch"
 	"github.com/darklang/dark-multi/config"
+	"github.com/darklang/dark-multi/queue"
 	"github.com/darklang/dark-multi/summary"
 	"github.com/darklang/dark-multi/task"
 	"github.com/darklang/dark-multi/tmux"
@@ -62,6 +63,7 @@ type TaskInfo struct {
 // GridModel displays all Claude sessions in a grid layout.
 type GridModel struct {
 	branches        []*branch.Branch
+	queueTasks      []*queue.Task             // all tasks from queue
 	paneContent     map[string]string         // branch name -> captured content
 	containerStats  map[string]ContainerStats // branch name -> stats
 	gitStats        map[string]*GitStatsInfo  // cached git stats
@@ -76,6 +78,8 @@ type GridModel struct {
 	inputText       string
 	proxyRunning    bool
 	loading         bool
+	statusFilter    []queue.Status            // filter by these statuses (empty = show all)
+	processorOn     bool                      // queue processor running
 }
 
 // Grid layout messages
@@ -83,17 +87,27 @@ type paneContentMsg map[string]string
 type containerStatsMsg map[string]ContainerStats
 type runningStateMsg map[string]bool
 type taskInfoMsg map[string]*TaskInfo
+type queueTasksMsg []*queue.Task
 type gridTickMsg time.Time
 
 // NewGridModel creates a new grid view.
 func NewGridModel() GridModel {
+	// Start the queue processor
+	queue.StartProcessor()
+
+	// Default filter: show running tasks
+	defaultFilter := []queue.Status{queue.StatusRunning}
+
 	return GridModel{
 		branches:       branch.GetManagedBranches(),
+		queueTasks:     queue.Get().GetAll(),
 		paneContent:    make(map[string]string),
 		containerStats: make(map[string]ContainerStats),
 		gitStats:       make(map[string]*GitStatsInfo),
 		runningState:   make(map[string]bool),
 		taskInfo:       make(map[string]*TaskInfo),
+		statusFilter:   defaultFilter,
+		processorOn:    true,
 	}
 }
 
@@ -105,9 +119,14 @@ func (m GridModel) Init() tea.Cmd {
 		m.loadGridGitStats,
 		m.loadRunningState,
 		m.loadTaskInfo,
+		loadQueueTasks,
 		checkProxyStatus,
 		gridTickCmd(),
 	)
+}
+
+func loadQueueTasks() tea.Msg {
+	return queueTasksMsg(queue.Get().GetAll())
 }
 
 func (m GridModel) loadTaskInfo() tea.Msg {
@@ -407,6 +426,12 @@ func (m GridModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.resumeTask(b)
 			}
 
+		case "f":
+			// Cycle through filter options
+			m.statusFilter = m.nextFilter()
+			m.cursor = 0
+			return m, nil
+
 		case "?":
 			return NewHelpModel(), nil
 		}
@@ -439,14 +464,19 @@ func (m GridModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.proxyRunning = bool(msg)
 		return m, nil
 
+	case queueTasksMsg:
+		m.queueTasks = msg
+		return m, nil
+
 	case gridTickMsg:
 		// Refresh branches and content periodically
 		m.branches = branch.GetManagedBranches()
-		if m.cursor >= len(m.branches) && len(m.branches) > 0 {
-			m.cursor = len(m.branches) - 1
+		m.queueTasks = queue.Get().GetAll()
+		if m.cursor >= len(m.filteredTasks()) && len(m.filteredTasks()) > 0 {
+			m.cursor = len(m.filteredTasks()) - 1
 		}
 		// Note: Don't clean up globalPendingBranches here - let branchStartedMsg handle it
-		return m, tea.Batch(m.loadPaneContent, loadContainerStats, m.loadGridGitStats, m.loadRunningState, m.loadTaskInfo, gridTickCmd())
+		return m, tea.Batch(m.loadPaneContent, loadContainerStats, m.loadGridGitStats, m.loadRunningState, m.loadTaskInfo, loadQueueTasks, gridTickCmd())
 
 	case createStepMsg:
 		if pending, ok := globalPendingBranches[msg.name]; ok {
@@ -549,6 +579,65 @@ func (m GridModel) handleInputMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+// filteredTasks returns queue tasks filtered by status.
+func (m GridModel) filteredTasks() []*queue.Task {
+	if len(m.statusFilter) == 0 {
+		return m.queueTasks
+	}
+
+	filterSet := make(map[queue.Status]bool)
+	for _, s := range m.statusFilter {
+		filterSet[s] = true
+	}
+
+	var result []*queue.Task
+	for _, t := range m.queueTasks {
+		if filterSet[t.Status] {
+			result = append(result, t)
+		}
+	}
+	return result
+}
+
+// nextFilter cycles through filter presets.
+func (m GridModel) nextFilter() []queue.Status {
+	// Filter presets to cycle through
+	presets := [][]queue.Status{
+		{queue.StatusRunning},                                        // Running only
+		{queue.StatusRunning, queue.StatusReady},                     // Running + Ready
+		{queue.StatusRunning, queue.StatusReady, queue.StatusWaiting}, // Active
+		{},                                                           // All
+	}
+
+	// Find current preset
+	currentKey := filterKey(m.statusFilter)
+	for i, preset := range presets {
+		if filterKey(preset) == currentKey {
+			return presets[(i+1)%len(presets)]
+		}
+	}
+	return presets[0]
+}
+
+func filterKey(statuses []queue.Status) string {
+	var parts []string
+	for _, s := range statuses {
+		parts = append(parts, string(s))
+	}
+	return strings.Join(parts, ",")
+}
+
+// filterDescription returns a human-readable description of current filter.
+func (m GridModel) filterDescription() string {
+	if len(m.statusFilter) == 0 {
+		return "all"
+	}
+	if len(m.statusFilter) == 1 {
+		return string(m.statusFilter[0])
+	}
+	return fmt.Sprintf("%d statuses", len(m.statusFilter))
 }
 
 // filteredPendingBranches returns pending branches that don't overlap with existing branches
@@ -684,7 +773,7 @@ func (m GridModel) View() string {
 	} else if m.message != "" {
 		b.WriteString(m.message)
 	} else {
-		b.WriteString(helpStyle.Render("[n]ew [x]del [s]tart [k]ill [c]laude [t]erm [p]rompt [r]alph [?] [q]"))
+		b.WriteString(helpStyle.Render("[n]ew [x]del [s]tart [k]ill [c]laude [t]erm [p]rompt [r]alph [f]ilter [?] [q]"))
 	}
 
 	return b.String()
@@ -735,8 +824,18 @@ func (m GridModel) renderStatusBar() string {
 		memStr = fmt.Sprintf("%.1fGB", totalMemMB/1024)
 	}
 
-	return statusBarStyle.Render(fmt.Sprintf("%d cores, %dGB  •  %d/%d running (%.0f%% CPU, %s/%.0f%% RAM)  •  proxy %s",
-		cpuCores, ramGB, running, maxSuggested, hostCpuPct, memStr, hostMemPct, proxyStatus))
+	// Queue stats
+	q := queue.Get()
+	qRunning := q.CountRunning()
+	qReady := len(q.GetByStatus(queue.StatusReady))
+	qTotal := len(m.queueTasks)
+	queueInfo := fmt.Sprintf("queue: %d run, %d ready, %d total", qRunning, qReady, qTotal)
+
+	// Filter info
+	filterInfo := fmt.Sprintf("filter: %s", m.filterDescription())
+
+	return statusBarStyle.Render(fmt.Sprintf("%d cores, %dGB  •  %d/%d running (%.0f%% CPU, %s/%.0f%% RAM)  •  %s  •  %s  •  proxy %s",
+		cpuCores, ramGB, running, maxSuggested, hostCpuPct, memStr, hostMemPct, queueInfo, filterInfo, proxyStatus))
 }
 
 func (m GridModel) renderCell(idx int, width, height int) string {
