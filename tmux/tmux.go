@@ -233,8 +233,9 @@ func detectTerminal() string {
 	return "xterm"
 }
 
-// StartRalphLoop starts the Ralph loop in the Claude session.
-// Kills any existing session and starts fresh.
+// StartRalphLoop starts the Ralph loop in the Claude session (headless).
+// Kills any existing session and starts fresh. Does NOT open a terminal window.
+// Use OpenClaude() to view the session.
 func StartRalphLoop(branchName, containerID string) error {
 	if !IsAvailable() {
 		return fmt.Errorf("tmux not available")
@@ -254,7 +255,6 @@ func StartRalphLoop(branchName, containerID string) error {
 	exec.Command("tmux", "set-option", "-t", session, "-g", "mouse", "on").Run()
 
 	// Set up pipe-pane to log all output for summarization
-	// The log file will be inside the container at /home/dark/app/.claude-task/output.log
 	exec.Command("tmux", "pipe-pane", "-t", session, "-o", "cat >> /tmp/claude-output-"+branchName+".log").Run()
 
 	// Start bash in container with API key, then run ralph
@@ -262,7 +262,7 @@ func StartRalphLoop(branchName, containerID string) error {
 	exec.Command("tmux", "send-keys", "-t", session, dockerBash, "Enter").Run()
 	exec.Command("tmux", "send-keys", "-t", session, "sleep 1 && .claude-task/ralph.sh", "Enter").Run()
 
-	return openInTerminal(session)
+	return nil // Headless - no terminal window opened
 }
 
 // GetOutputLogPath returns the path to the Claude output log for a branch.
