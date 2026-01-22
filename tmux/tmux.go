@@ -48,8 +48,8 @@ func OpenClaude(branchName, containerID string) error {
 		}
 		exec.Command("tmux", "set-option", "-t", session, "-g", "mouse", "on").Run()
 
-		// Start bash in container, then run claude
-		dockerBash := fmt.Sprintf("docker exec -it -w /home/dark/app %s bash", containerID)
+		// Start bash in container with API key, then run claude
+		dockerBash := dockerExecWithEnv(containerID)
 		exec.Command("tmux", "send-keys", "-t", session, dockerBash, "Enter").Run()
 		exec.Command("tmux", "send-keys", "-t", session, "sleep 1 && claude --dangerously-skip-permissions", "Enter").Run()
 	}
@@ -72,12 +72,21 @@ func OpenTerminal(branchName, containerID string) error {
 		}
 		exec.Command("tmux", "set-option", "-t", session, "-g", "mouse", "on").Run()
 
-		// Start bash in container
-		dockerBash := fmt.Sprintf("docker exec -it -w /home/dark/app %s bash", containerID)
+		// Start bash in container with API key
+		dockerBash := dockerExecWithEnv(containerID)
 		exec.Command("tmux", "send-keys", "-t", session, dockerBash, "Enter").Run()
 	}
 
 	return openInTerminal(session)
+}
+
+// dockerExecWithEnv returns the docker exec command with ANTHROPIC_API_KEY passed through.
+func dockerExecWithEnv(containerID string) string {
+	apiKey := os.Getenv("ANTHROPIC_API_KEY")
+	if apiKey != "" {
+		return fmt.Sprintf("docker exec -it -e ANTHROPIC_API_KEY=%s -w /home/dark/app %s bash", apiKey, containerID)
+	}
+	return fmt.Sprintf("docker exec -it -w /home/dark/app %s bash", containerID)
 }
 
 // openInTerminal opens a tmux session in a terminal window.
@@ -248,8 +257,8 @@ func StartRalphLoop(branchName, containerID string) error {
 	// The log file will be inside the container at /home/dark/app/.claude-task/output.log
 	exec.Command("tmux", "pipe-pane", "-t", session, "-o", "cat >> /tmp/claude-output-"+branchName+".log").Run()
 
-	// Start bash in container, then run ralph
-	dockerBash := fmt.Sprintf("docker exec -it -w /home/dark/app %s bash", containerID)
+	// Start bash in container with API key, then run ralph
+	dockerBash := dockerExecWithEnv(containerID)
 	exec.Command("tmux", "send-keys", "-t", session, dockerBash, "Enter").Run()
 	exec.Command("tmux", "send-keys", "-t", session, "sleep 1 && .claude-task/ralph.sh", "Enter").Run()
 
@@ -283,7 +292,7 @@ func CreateBranchSession(branchName string, containerID string, branchPath strin
 		return err
 	}
 	exec.Command("tmux", "set-option", "-t", session, "-g", "mouse", "on").Run()
-	dockerBash := fmt.Sprintf("docker exec -it -w /home/dark/app %s bash", containerID)
+	dockerBash := dockerExecWithEnv(containerID)
 	exec.Command("tmux", "send-keys", "-t", session, dockerBash, "Enter").Run()
 	exec.Command("tmux", "send-keys", "-t", session, "sleep 1 && claude --dangerously-skip-permissions", "Enter").Run()
 	return nil
