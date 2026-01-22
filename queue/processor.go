@@ -70,7 +70,10 @@ func runProcessor() {
 func processQueue() {
 	q := Get()
 
-	// First, sync task phases with queue status
+	// Sync with actual container state (handles manually started containers)
+	syncRunningContainers(q)
+
+	// Sync task phases with queue status
 	syncTaskPhases(q)
 
 	// Check if we have capacity
@@ -113,6 +116,24 @@ func syncTaskPhases(q *Queue) {
 			} else {
 				q.UpdateStatus(t.ID, StatusNeedsPrompt)
 			}
+		}
+	}
+	q.Save()
+}
+
+// syncRunningContainers updates queue status based on actual running containers.
+// This handles the case where containers were started manually before the queue existed.
+func syncRunningContainers(q *Queue) {
+	// Check tasks that are ready or needs-prompt - if their container is running, mark as running
+	for _, t := range q.GetAll() {
+		if t.Status == StatusRunning || t.Status == StatusDone {
+			continue // Already in terminal state
+		}
+
+		b := branch.New(t.ID)
+		if b.Exists() && b.IsRunning() {
+			// Container is running, update queue status
+			q.UpdateStatus(t.ID, StatusRunning)
 		}
 	}
 	q.Save()
