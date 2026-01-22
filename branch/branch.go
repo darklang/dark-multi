@@ -150,32 +150,60 @@ func (b *Branch) GitStatus() (modified int, untracked int) {
 	return modified, untracked
 }
 
-// GitStats returns commits ahead of origin/main and total lines added/removed (committed + uncommitted).
+// GitStats returns commits ahead of main and total lines added/removed (committed + uncommitted).
 func (b *Branch) GitStats() (commits int, added int, removed int) {
 	if !b.Exists() || b.Name == "main" {
 		return 0, 0, 0
 	}
 
-	// Count commits ahead of origin/main
-	cmd := exec.Command("git", "-C", b.Path, "rev-list", "--count", "origin/main..HEAD")
-	out, err := cmd.Output()
-	if err == nil {
-		fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &commits)
+	// Try different refs to compare against
+	refs := []string{"origin/main", "main"}
+	var baseRef string
+	for _, ref := range refs {
+		cmd := exec.Command("git", "-C", b.Path, "rev-parse", "--verify", ref)
+		if cmd.Run() == nil {
+			baseRef = ref
+			break
+		}
 	}
 
-	// Get total diff stats vs origin/main (includes uncommitted)
-	// Using "origin/main" without "..." shows diff including working tree
-	cmd = exec.Command("git", "-C", b.Path, "diff", "--numstat", "origin/main")
-	out, err = cmd.Output()
-	if err == nil {
-		for _, line := range strings.Split(string(out), "\n") {
-			fields := strings.Fields(line)
-			if len(fields) >= 2 {
-				var a, r int
-				fmt.Sscanf(fields[0], "%d", &a)
-				fmt.Sscanf(fields[1], "%d", &r)
-				added += a
-				removed += r
+	if baseRef != "" {
+		// Count commits ahead of base
+		cmd := exec.Command("git", "-C", b.Path, "rev-list", "--count", baseRef+"..HEAD")
+		out, err := cmd.Output()
+		if err == nil {
+			fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &commits)
+		}
+
+		// Get total diff stats vs base (includes uncommitted)
+		cmd = exec.Command("git", "-C", b.Path, "diff", "--numstat", baseRef)
+		out, err = cmd.Output()
+		if err == nil {
+			for _, line := range strings.Split(string(out), "\n") {
+				fields := strings.Fields(line)
+				if len(fields) >= 2 {
+					var a, r int
+					fmt.Sscanf(fields[0], "%d", &a)
+					fmt.Sscanf(fields[1], "%d", &r)
+					added += a
+					removed += r
+				}
+			}
+		}
+	} else {
+		// No base ref found - just show uncommitted changes
+		cmd := exec.Command("git", "-C", b.Path, "diff", "--numstat", "HEAD")
+		out, err := cmd.Output()
+		if err == nil {
+			for _, line := range strings.Split(string(out), "\n") {
+				fields := strings.Fields(line)
+				if len(fields) >= 2 {
+					var a, r int
+					fmt.Sscanf(fields[0], "%d", &a)
+					fmt.Sscanf(fields[1], "%d", &r)
+					added += a
+					removed += r
+				}
 			}
 		}
 	}

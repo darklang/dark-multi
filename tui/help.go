@@ -70,6 +70,23 @@ func (m HelpModel) View() string {
 	b.WriteString("  l           View logs\n")
 	b.WriteString("\n")
 
+	b.WriteString(sectionStyle.Render("Task Management"))
+	b.WriteString("\n")
+	b.WriteString("  p           Edit pre-prompt (task definition)\n")
+	b.WriteString("  r           Start Ralph loop (autonomous execution)\n")
+	b.WriteString("\n")
+	b.WriteString("  Flow: p → c (plan with Claude) → r (start loop)\n")
+	b.WriteString("\n")
+
+	b.WriteString(sectionStyle.Render("Task Phases"))
+	b.WriteString("\n")
+	b.WriteString("  📝 no task     No pre-prompt defined\n")
+	b.WriteString("  🔍 planning    Claude creating plan & todos\n")
+	b.WriteString("  ✋ ready       Plan complete, waiting for you\n")
+	b.WriteString("  ⚡ executing   Ralph loop running\n")
+	b.WriteString("  ✅ done        Task complete\n")
+	b.WriteString("\n")
+
 	b.WriteString(sectionStyle.Render("Grid View"))
 	b.WriteString("\n")
 	b.WriteString("  arrows      Navigate branches\n")

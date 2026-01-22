@@ -11,6 +11,8 @@ import (
 
 	"github.com/darklang/dark-multi/branch"
 	"github.com/darklang/dark-multi/config"
+	"github.com/darklang/dark-multi/summary"
+	"github.com/darklang/dark-multi/task"
 	"github.com/darklang/dark-multi/tmux"
 )
 
@@ -50,6 +52,13 @@ type ContainerStats struct {
 	Memory string // e.g., "1.2GB"
 }
 
+// TaskInfo holds cached task information for display.
+type TaskInfo struct {
+	Phase      task.Phase
+	StatusLine string // e.g., "3/7 todos"
+	Summary    string // AI-generated summary of current activity
+}
+
 // GridModel displays all Claude sessions in a grid layout.
 type GridModel struct {
 	branches        []*branch.Branch
@@ -57,6 +66,7 @@ type GridModel struct {
 	containerStats  map[string]ContainerStats // branch name -> stats
 	gitStats        map[string]*GitStatsInfo  // cached git stats
 	runningState    map[string]bool           // cached IsRunning state
+	taskInfo        map[string]*TaskInfo      // cached task info
 	cursor          int
 	width           int
 	height          int
@@ -72,6 +82,7 @@ type GridModel struct {
 type paneContentMsg map[string]string
 type containerStatsMsg map[string]ContainerStats
 type runningStateMsg map[string]bool
+type taskInfoMsg map[string]*TaskInfo
 type gridTickMsg time.Time
 
 // NewGridModel creates a new grid view.
@@ -82,6 +93,7 @@ func NewGridModel() GridModel {
 		containerStats: make(map[string]ContainerStats),
 		gitStats:       make(map[string]*GitStatsInfo),
 		runningState:   make(map[string]bool),
+		taskInfo:       make(map[string]*TaskInfo),
 	}
 }
 
@@ -92,9 +104,28 @@ func (m GridModel) Init() tea.Cmd {
 		loadContainerStats,
 		m.loadGridGitStats,
 		m.loadRunningState,
+		m.loadTaskInfo,
 		checkProxyStatus,
 		gridTickCmd(),
 	)
+}
+
+func (m GridModel) loadTaskInfo() tea.Msg {
+	info := make(map[string]*TaskInfo)
+	for _, b := range m.branches {
+		t := task.New(b.Name, b.Path)
+		phase := t.Phase()
+		ti := &TaskInfo{
+			Phase:      phase,
+			StatusLine: t.StatusLine(),
+		}
+		// Get AI summary for executing branches
+		if phase == task.PhaseExecuting {
+			ti.Summary = summary.GetSummary(b.Name)
+		}
+		info[b.Name] = ti
+	}
+	return taskInfoMsg(info)
 }
 
 func (m GridModel) loadRunningState() tea.Msg {
@@ -239,6 +270,17 @@ func (m GridModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.branches) > 0 && m.cursor < len(m.branches) {
 				b := m.branches[m.cursor]
 				if b.IsRunning() {
+					// Inject task context if there's an active task
+					t := task.New(b.Name, b.Path)
+					if t.Exists() {
+						phase := t.Phase()
+						if phase == task.PhasePlanning || phase == task.PhaseReady || phase == task.PhaseExecuting {
+							t.InjectTaskContext()
+							// Also ensure .claude-task dir exists
+							t.EnsureClaudeTaskDir()
+						}
+					}
+
 					containerID, err := b.ContainerID()
 					if err != nil {
 						m.message = fmt.Sprintf("Error: %v", err)
@@ -326,6 +368,45 @@ func (m GridModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return logs, logs.Init()
 			}
 
+		case "p":
+			// Edit pre-prompt (task definition)
+			if len(m.branches) > 0 && m.cursor < len(m.branches) {
+				b := m.branches[m.cursor]
+				t := task.New(b.Name, b.Path)
+
+				// Create pre-prompt file with template if it doesn't exist
+				if !t.Exists() {
+					template := task.PrePromptTemplate(b.Name)
+					if err := t.SetPrePrompt(template); err != nil {
+						m.message = fmt.Sprintf("Error: %v", err)
+						return m, nil
+					}
+				}
+
+				// Use tea.ExecProcess to run editor (hands over terminal properly)
+				editor := findEditor()
+				c := exec.Command(editor, t.PrePromptPath())
+				return m, tea.ExecProcess(c, func(err error) tea.Msg {
+					if err != nil {
+						return operationErrMsg{err}
+					}
+					// After editor closes, check content and set phase
+					content := t.PrePrompt()
+					if content != "" && !isTemplateOnly(content) {
+						t.SetPhase(task.PhasePlanning)
+						return operationDoneMsg{fmt.Sprintf("Task set for %s - press 'c' to start", b.Name)}
+					}
+					return operationDoneMsg{"Pre-prompt saved"}
+				})
+			}
+
+		case "r":
+			// Resume/restart loop
+			if len(m.branches) > 0 && m.cursor < len(m.branches) {
+				b := m.branches[m.cursor]
+				return m, m.resumeTask(b)
+			}
+
 		case "?":
 			return NewHelpModel(), nil
 		}
@@ -350,6 +431,10 @@ func (m GridModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.runningState = msg
 		return m, nil
 
+	case taskInfoMsg:
+		m.taskInfo = msg
+		return m, nil
+
 	case proxyStatusMsg:
 		m.proxyRunning = bool(msg)
 		return m, nil
@@ -361,7 +446,7 @@ func (m GridModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = len(m.branches) - 1
 		}
 		// Note: Don't clean up globalPendingBranches here - let branchStartedMsg handle it
-		return m, tea.Batch(m.loadPaneContent, loadContainerStats, m.loadGridGitStats, m.loadRunningState, gridTickCmd())
+		return m, tea.Batch(m.loadPaneContent, loadContainerStats, m.loadGridGitStats, m.loadRunningState, m.loadTaskInfo, gridTickCmd())
 
 	case createStepMsg:
 		if pending, ok := globalPendingBranches[msg.name]; ok {
@@ -599,7 +684,7 @@ func (m GridModel) View() string {
 	} else if m.message != "" {
 		b.WriteString(m.message)
 	} else {
-		b.WriteString(helpStyle.Render("[n]ew [x]del [s]tart [k]ill [c]laude [t]erm [e]ditor [l]ogs [d]iff [m]atter [?]help [q]uit"))
+		b.WriteString(helpStyle.Render("[n]ew [x]del [s]tart [k]ill [c]laude [t]erm [p]rompt [r]alph [?] [q]"))
 	}
 
 	return b.String()
@@ -714,6 +799,18 @@ func (m GridModel) renderCell(idx int, width, height int) string {
 		if gs.Commits > 0 || gs.Added > 0 || gs.Removed > 0 {
 			header += helpStyle.Render(fmt.Sprintf(", git: %dc +%d/-%d", gs.Commits, gs.Added, gs.Removed))
 		}
+	}
+
+	// Add task status if task exists
+	if ti, ok := m.taskInfo[br.Name]; ok && ti != nil && ti.Phase != task.PhaseNone {
+		taskStatus := ti.Phase.Icon() + " " + ti.Phase.Display()
+		if ti.StatusLine != "" {
+			taskStatus += " " + ti.StatusLine
+		}
+		if ti.Summary != "" {
+			taskStatus += ": " + ti.Summary
+		}
+		header += "\n" + helpStyle.Render(taskStatus)
 	}
 
 	// Add CPU/RAM stats if running
@@ -864,4 +961,70 @@ func (m GridModel) removeBranch(b *branch.Branch) tea.Cmd {
 		}
 		return operationDoneMsg{fmt.Sprintf("Removed %s", b.Name)}
 	}
+}
+
+// Task-related commands
+
+func (m GridModel) resumeTask(b *branch.Branch) tea.Cmd {
+	return func() tea.Msg {
+		if !b.IsRunning() {
+			return operationErrMsg{fmt.Errorf("%s is stopped - press 's' to start first", b.Name)}
+		}
+
+		t := task.New(b.Name, b.Path)
+		phase := t.Phase()
+
+		if phase == task.PhaseNone {
+			return operationErrMsg{fmt.Errorf("no task defined - press 'p' to set pre-prompt")}
+		}
+
+		if phase == task.PhaseDone {
+			return operationDoneMsg{"Task already complete! Push your changes."}
+		}
+
+		// Set phase to executing and copy ralph script
+		t.SetPhase(task.PhaseExecuting)
+		if err := t.CopyLoopScript(); err != nil {
+			return operationErrMsg{fmt.Errorf("failed to copy loop script: %w", err)}
+		}
+		if err := t.InjectTaskContext(); err != nil {
+			return operationErrMsg{fmt.Errorf("failed to inject context: %w", err)}
+		}
+
+		// Get container ID and start the Ralph loop
+		containerID, err := b.ContainerID()
+		if err != nil {
+			return operationErrMsg{fmt.Errorf("failed to get container ID: %w", err)}
+		}
+
+		if err := tmux.StartRalphLoop(b.Name, containerID); err != nil {
+			return operationErrMsg{fmt.Errorf("failed to start Ralph loop: %w", err)}
+		}
+
+		return operationDoneMsg{fmt.Sprintf("Ralph loop started for %s", b.Name)}
+	}
+}
+
+// findEditor returns the user's preferred editor.
+func findEditor() string {
+	// Try micro first (simple, works well in terminals)
+	if _, err := exec.LookPath("micro"); err == nil {
+		return "micro"
+	}
+	// Try nano
+	if _, err := exec.LookPath("nano"); err == nil {
+		return "nano"
+	}
+	// Try vim
+	if _, err := exec.LookPath("vim"); err == nil {
+		return "vim"
+	}
+	// Fall back to vi
+	return "vi"
+}
+
+// isTemplateOnly checks if content is still just the template.
+func isTemplateOnly(content string) bool {
+	return strings.Contains(content, "[What should this accomplish?]") &&
+		strings.Contains(content, "[Relevant background")
 }

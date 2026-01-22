@@ -101,6 +101,8 @@ func CapturePaneContent(branchName string, lines int) string {
 	if !sessionExists(session) {
 		return ""
 	}
+
+	// Capture last N lines from scrollback
 	cmd := exec.Command("tmux", "capture-pane", "-t", session, "-p", "-S", fmt.Sprintf("-%d", lines))
 	out, err := cmd.Output()
 	if err != nil {
@@ -220,6 +222,43 @@ func detectTerminal() string {
 	}
 
 	return "xterm"
+}
+
+// StartRalphLoop starts the Ralph loop in the Claude session.
+// Kills any existing session and starts fresh.
+func StartRalphLoop(branchName, containerID string) error {
+	if !IsAvailable() {
+		return fmt.Errorf("tmux not available")
+	}
+
+	session := sessionName(branchName, SessionClaude)
+
+	// Kill existing session - cleaner than trying to interrupt
+	if sessionExists(session) {
+		exec.Command("tmux", "kill-session", "-t", session).Run()
+	}
+
+	// Create fresh session
+	if err := exec.Command("tmux", "new-session", "-d", "-s", session).Run(); err != nil {
+		return fmt.Errorf("failed to create session: %w", err)
+	}
+	exec.Command("tmux", "set-option", "-t", session, "-g", "mouse", "on").Run()
+
+	// Set up pipe-pane to log all output for summarization
+	// The log file will be inside the container at /home/dark/app/.claude-task/output.log
+	exec.Command("tmux", "pipe-pane", "-t", session, "-o", "cat >> /tmp/claude-output-"+branchName+".log").Run()
+
+	// Start bash in container, then run ralph
+	dockerBash := fmt.Sprintf("docker exec -it -w /home/dark/app %s bash", containerID)
+	exec.Command("tmux", "send-keys", "-t", session, dockerBash, "Enter").Run()
+	exec.Command("tmux", "send-keys", "-t", session, "sleep 1 && .claude-task/ralph.sh", "Enter").Run()
+
+	return openInTerminal(session)
+}
+
+// GetOutputLogPath returns the path to the Claude output log for a branch.
+func GetOutputLogPath(branchName string) string {
+	return "/tmp/claude-output-" + branchName + ".log"
 }
 
 // Legacy compatibility
