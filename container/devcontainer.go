@@ -227,6 +227,11 @@ func GenerateOverrideConfig(b BranchInfo) (string, error) {
 	// Ensure Claude is installed (auth via ANTHROPIC_API_KEY passed at runtime)
 	setupCmds = append(setupCmds, "sudo npm install -g @anthropic-ai/claude-code 2>/dev/null || true")
 
+	// Pre-seed Claude settings to skip onboarding prompts
+	// This creates settings that tell Claude we've already completed setup
+	claudeSettingsCmd := `mkdir -p /home/dark/.claude && echo '{"theme":"dark","hasCompletedOnboarding":true,"apiKeySource":"env"}' > /home/dark/.claude/settings.json && chown -R dark:dark /home/dark/.claude`
+	setupCmds = append(setupCmds, claudeSettingsCmd)
+
 	if !strings.Contains(postCreate, "claude-code") {
 		setup := strings.Join(setupCmds, " && ")
 		if postCreate != "" {
