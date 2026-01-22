@@ -318,7 +318,9 @@ Actions:
   init    Initialize queue with predefined tasks
   ls      List all tasks in queue
   add     Add a task (multi queue add <id> <prompt>)
-  status  Show queue status summary`,
+  status  Show queue status summary
+  start   Start the background queue processor
+  process Run one processing cycle (start next task if slot available)`,
 		Args: cobra.MinimumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			action := args[0]
@@ -380,8 +382,24 @@ Actions:
 				q.Save()
 				fmt.Printf("\033[0;32m✓\033[0m Added task: %s\n", id)
 
+			case "start":
+				fmt.Println("Starting queue processor...")
+				queue.StartProcessor()
+				fmt.Println("\033[0;32m✓\033[0m Queue processor started")
+				fmt.Println("Press Ctrl+C to stop")
+				// Block forever (processor runs in background)
+				select {}
+
+			case "process":
+				fmt.Println("Processing queue once...")
+				if err := queue.ProcessOnce(); err != nil {
+					fmt.Fprintf(os.Stderr, "\033[0;31merror:\033[0m %v\n", err)
+					os.Exit(1)
+				}
+				fmt.Println("\033[0;32m✓\033[0m Done")
+
 			default:
-				fmt.Fprintf(os.Stderr, "Unknown action: %s\nUse: init, ls, status, add\n", action)
+				fmt.Fprintf(os.Stderr, "Unknown action: %s\nUse: init, ls, status, add, start, process\n", action)
 				os.Exit(1)
 			}
 		},
