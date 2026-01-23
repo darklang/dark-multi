@@ -24,8 +24,9 @@ const (
 	StatusPaused      Status = "paused"       // Manually paused
 )
 
-// MaxConcurrent is the maximum number of containers to run at once.
-const MaxConcurrent = 10
+// MaxConcurrent returns the configured max concurrent containers.
+// Use config.GetMaxConcurrent() for the actual value.
+var MaxConcurrent = 10 // Deprecated: use config.GetMaxConcurrent()
 
 // Task represents a queued task.
 type Task struct {

@@ -465,8 +465,9 @@ func (m GridModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Refresh branches and content periodically
 		m.branches = branch.GetManagedBranches()
 		m.queueTasks = queue.Get().GetAll()
-		if m.cursor >= len(m.filteredTasks()) && len(m.filteredTasks()) > 0 {
-			m.cursor = len(m.filteredTasks()) - 1
+		// Keep cursor in bounds (grid shows branches)
+		if m.cursor >= len(m.branches) && len(m.branches) > 0 {
+			m.cursor = len(m.branches) - 1
 		}
 		// Note: Don't clean up globalPendingBranches here - let branchStartedMsg handle it
 		return m, tea.Batch(m.loadPaneContent, loadContainerStats, m.loadGridGitStats, m.loadRunningState, m.loadTaskInfo, loadQueueTasks, gridTickCmd())

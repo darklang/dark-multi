@@ -76,27 +76,29 @@ func processQueue() {
 	// Sync task phases with queue status
 	syncTaskPhases(q)
 
-	// Check if we have capacity
-	running := q.CountRunning()
-	if running >= MaxConcurrent {
-		return
-	}
+	// Start all ready tasks up to capacity (no waiting between starts)
+	maxConcurrent := config.GetMaxConcurrent()
+	for {
+		running := q.CountRunning()
+		if running >= maxConcurrent {
+			break
+		}
 
-	// Get next ready task
-	task := q.NextReady()
-	if task == nil {
-		return
-	}
+		task := q.NextReady()
+		if task == nil {
+			break
+		}
 
-	// Start the task
-	if err := startTask(task); err != nil {
-		q.SetError(task.ID, err.Error())
+		// Start the task
+		if err := startTask(task); err != nil {
+			q.SetError(task.ID, err.Error())
+			q.Save()
+			continue
+		}
+
+		q.UpdateStatus(task.ID, StatusRunning)
 		q.Save()
-		return
 	}
-
-	q.UpdateStatus(task.ID, StatusRunning)
-	q.Save()
 }
 
 // syncTaskPhases updates queue status based on task phase files.

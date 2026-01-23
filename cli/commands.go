@@ -361,9 +361,10 @@ Actions:
 				waiting := len(q.GetByStatus(queue.StatusWaiting))
 				done := len(q.GetByStatus(queue.StatusDone))
 				needsPrompt := len(q.GetByStatus(queue.StatusNeedsPrompt))
+				maxConcurrent := config.GetMaxConcurrent()
 
 				fmt.Printf("Queue Status:\n")
-				fmt.Printf("  🔄 Running:      %d / %d max\n", running, queue.MaxConcurrent)
+				fmt.Printf("  🔄 Running:      %d / %d max\n", running, maxConcurrent)
 				fmt.Printf("  ⏳ Ready:        %d\n", ready)
 				fmt.Printf("  📝 Needs Prompt: %d\n", needsPrompt)
 				fmt.Printf("  ⏸️  Waiting:      %d\n", waiting)
