@@ -199,7 +199,27 @@ func (q *Queue) GetByStatus(statuses ...Status) []*Task {
 	return result
 }
 
-// GetAll returns all tasks sorted by priority.
+// statusOrder returns the sort order for a status (lower = first).
+func statusOrder(s Status) int {
+	switch s {
+	case StatusDone:
+		return 0
+	case StatusRunning:
+		return 1
+	case StatusWaiting:
+		return 2
+	case StatusReady:
+		return 3
+	case StatusNeedsPrompt:
+		return 4
+	case StatusPaused:
+		return 5
+	default:
+		return 9
+	}
+}
+
+// GetAll returns all tasks sorted by status (done first), then priority.
 func (q *Queue) GetAll() []*Task {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
@@ -210,9 +230,16 @@ func (q *Queue) GetAll() []*Task {
 	}
 
 	sort.Slice(result, func(i, j int) bool {
+		// First sort by status
+		orderI, orderJ := statusOrder(result[i].Status), statusOrder(result[j].Status)
+		if orderI != orderJ {
+			return orderI < orderJ
+		}
+		// Then by priority
 		if result[i].Priority != result[j].Priority {
 			return result[i].Priority < result[j].Priority
 		}
+		// Then by creation time
 		return result[i].CreatedAt.Before(result[j].CreatedAt)
 	})
 

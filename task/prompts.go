@@ -71,7 +71,8 @@ func (t *Task) planningContext() string {
 		"- Be thorough in research before creating the plan\n" +
 		"- Keep todos specific and actionable\n" +
 		"- Include testing in the plan\n" +
-		"- You can interact with the user now during planning\n\n" +
+		"- You can interact with the user now during planning\n" +
+		"- **COMMIT your plan** before signaling ready (git add . && git commit -m \"plan: <task summary>\")\n\n" +
 		"<!-- TASK CONTEXT END -->\n\n"
 }
 
@@ -123,17 +124,21 @@ func (t *Task) executingContext() string {
 		"3. Mark it done in .claude-task/todos.md (change [ ] to [x])\n" +
 		"4. Run tests to verify\n" +
 		"5. Continue to next todo\n\n" +
-		"## Commits\n\n" +
-		"Commit early and often as you make progress:\n" +
-		"- Short casual commit messages (e.g., \"add user auth\", \"fix login bug\")\n" +
+		"## IMPORTANT: Commit Your Work\n\n" +
+		"**You MUST commit after each completed todo.** This is critical.\n\n" +
+		"```bash\n" +
+		"git add -A && git commit -m \"<what you did>\"\n" +
+		"```\n\n" +
+		"- Commit after EVERY todo completion, not just at the end\n" +
+		"- Short casual messages (e.g., \"add user auth\", \"fix login bug\")\n" +
 		"- No attribution/co-author needed\n" +
-		"- Commit after completing each logical chunk of work\n" +
-		"- Don't wait until the end to commit everything\n\n" +
+		"- If you exit without committing, your work is lost!\n\n" +
 		"## When Done\n\n" +
 		"When ALL todos are complete and tests pass:\n" +
-		"- Make a final commit if there are uncommitted changes\n" +
-		"- Write \"done\" to .claude-task/phase\n" +
-		"- The loop will exit\n\n" +
+		"1. Make a final commit if there are any uncommitted changes\n" +
+		"2. Verify with `git status` that working tree is clean\n" +
+		"3. Write \"done\" to .claude-task/phase\n" +
+		"4. The loop will exit\n\n" +
 		"## If Stuck\n\n" +
 		"If stuck, just exit - the loop will restart you.\n" +
 		"Leave notes in .claude-task/todos.md about what's blocking.\n\n" +

@@ -4,6 +4,7 @@ package task
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -15,11 +16,16 @@ import (
 type Phase string
 
 const (
-	PhaseNone      Phase = ""          // No task assigned
-	PhasePlanning  Phase = "planning"  // AI creating plan, todos
-	PhaseReady     Phase = "ready"     // Planning done, waiting for user to start Ralph
-	PhaseExecuting Phase = "executing" // Ralph loop running
-	PhaseDone      Phase = "done"      // Complete
+	PhaseNone           Phase = ""                    // No task assigned
+	PhasePlanning       Phase = "planning"            // AI creating plan, todos
+	PhaseReady          Phase = "ready"               // Planning done, waiting for user to start Ralph
+	PhaseExecuting      Phase = "executing"           // Ralph loop running
+	PhaseDone           Phase = "done"                // Complete
+	PhaseAuthError      Phase = "auth-error"          // Authentication failed
+	PhaseError          Phase = "error"               // General error
+	PhaseMaxIterations  Phase = "max-iterations-reached" // Hit iteration limit
+	PhaseAwaitingAnswers Phase = "awaiting-answers"   // Needs human input
+	PhaseReadyForReview Phase = "ready-for-review"    // Completed, needs review
 )
 
 // PhaseDisplay returns a human-readable display string for a phase.
@@ -35,6 +41,16 @@ func (p Phase) Display() string {
 		return "executing"
 	case PhaseDone:
 		return "done"
+	case PhaseAuthError:
+		return "auth error"
+	case PhaseError:
+		return "error"
+	case PhaseMaxIterations:
+		return "max iterations"
+	case PhaseAwaitingAnswers:
+		return "needs input"
+	case PhaseReadyForReview:
+		return "review"
 	default:
 		return string(p)
 	}
@@ -53,6 +69,16 @@ func (p Phase) Icon() string {
 		return "⚡"
 	case PhaseDone:
 		return "✅"
+	case PhaseAuthError:
+		return "🔑"
+	case PhaseError:
+		return "❌"
+	case PhaseMaxIterations:
+		return "🔄"
+	case PhaseAwaitingAnswers:
+		return "❓"
+	case PhaseReadyForReview:
+		return "👀"
 	default:
 		return "?"
 	}
@@ -295,4 +321,39 @@ func (t *Task) GetCreatedTime() time.Time {
 		return time.Time{}
 	}
 	return info.ModTime()
+}
+
+// Cleanup removes task-related files for a clean PR.
+// This commits any uncommitted work first, then removes .claude-task/ and cleans CLAUDE.md.
+func (t *Task) Cleanup() error {
+	gitDir := t.BranchPath
+
+	// First, commit any uncommitted work (excluding task files)
+	// Check if there's uncommitted work
+	out, _ := exec.Command("git", "-C", gitDir, "status", "--porcelain").Output()
+	hasUncommitted := len(strings.TrimSpace(string(out))) > 0
+
+	if hasUncommitted {
+		// Stage and commit the actual work first
+		exec.Command("git", "-C", gitDir, "add", "-A").Run()
+		exec.Command("git", "-C", gitDir, "commit", "-m", fmt.Sprintf("wip: %s", t.BranchName)).Run()
+	}
+
+	// Now remove task files
+	claudeTaskDir := t.ClaudeTaskDir()
+	if _, err := os.Stat(claudeTaskDir); err == nil {
+		os.RemoveAll(claudeTaskDir)
+	}
+
+	// Remove injected task context from CLAUDE.md
+	t.RemoveTaskContext()
+
+	// Commit the cleanup separately (if there are changes)
+	out, _ = exec.Command("git", "-C", gitDir, "status", "--porcelain").Output()
+	if len(strings.TrimSpace(string(out))) > 0 {
+		exec.Command("git", "-C", gitDir, "add", "-A").Run()
+		exec.Command("git", "-C", gitDir, "commit", "-m", "cleanup: remove task management files").Run()
+	}
+
+	return nil
 }

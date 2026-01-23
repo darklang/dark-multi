@@ -227,9 +227,9 @@ func GenerateOverrideConfig(b BranchInfo) (string, error) {
 	// Ensure Claude is installed (auth via ANTHROPIC_API_KEY passed at runtime)
 	setupCmds = append(setupCmds, "sudo npm install -g @anthropic-ai/claude-code 2>/dev/null || true")
 
-	// Pre-seed Claude settings to skip onboarding prompts
-	// This creates settings that tell Claude we've already completed setup
-	claudeSettingsCmd := `mkdir -p /home/dark/.claude && echo '{"theme":"dark","hasCompletedOnboarding":true,"apiKeySource":"env"}' > /home/dark/.claude/settings.json && chown -R dark:dark /home/dark/.claude`
+	// Pre-seed Claude settings and clear any OAuth tokens
+	// This creates settings that tell Claude to use API key from env and removes any OAuth credentials
+	claudeSettingsCmd := `mkdir -p /home/dark/.claude && rm -f /home/dark/.claude/.credentials.json /home/dark/.claude/credentials.json /home/dark/.claude/oauth* 2>/dev/null; echo '{"theme":"dark","hasCompletedOnboarding":true,"apiKeySource":"env","hasAcknowledgedCostThreshold":true}' > /home/dark/.claude/settings.json && chown -R dark:dark /home/dark/.claude`
 	setupCmds = append(setupCmds, claudeSettingsCmd)
 
 	if !strings.Contains(postCreate, "claude-code") {
@@ -242,8 +242,16 @@ func GenerateOverrideConfig(b BranchInfo) (string, error) {
 		cfg["postCreateCommand"] = postCreate
 	}
 
-	// Note: Auth is handled via ANTHROPIC_API_KEY passed through docker exec -e at runtime
-	// (see tmux.dockerExecWithEnv). No oauth token or mounted config needed.
+	// Set ANTHROPIC_API_KEY in container environment
+	apiKey := config.GetAnthropicAPIKey()
+	if apiKey != "" {
+		containerEnv := make(map[string]interface{})
+		if existing, ok := cfg["containerEnv"].(map[string]interface{}); ok {
+			containerEnv = existing
+		}
+		containerEnv["ANTHROPIC_API_KEY"] = apiKey
+		cfg["containerEnv"] = containerEnv
+	}
 
 	// Write merged config
 	output, err := json.MarshalIndent(cfg, "", "  ")

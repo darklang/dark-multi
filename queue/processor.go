@@ -111,6 +111,22 @@ func syncTaskPhases(q *Queue) {
 		switch phase {
 		case task.PhaseDone:
 			q.UpdateStatus(t.ID, StatusDone)
+			// Clean up task files for a clean PR
+			go func(taskObj *task.Task, branchPath string) {
+				taskObj.Cleanup() // Removes .claude-task/ and cleans CLAUDE.md
+			}(taskObj, branchPath)
+			// Stop container when task is done to free resources
+			b := branch.New(t.ID)
+			if b.IsRunning() {
+				go branch.Stop(b) // Stop in background to not block sync
+			}
+		case task.PhaseAuthError, task.PhaseError, task.PhaseMaxIterations:
+			// Error states - mark as waiting for human intervention
+			q.UpdateStatus(t.ID, StatusWaiting)
+			q.SetError(t.ID, string(phase))
+		case task.PhaseAwaitingAnswers, task.PhaseReadyForReview:
+			// Needs human input
+			q.UpdateStatus(t.ID, StatusWaiting)
 		case task.PhaseNone:
 			// Task was reset or deleted
 			if t.Prompt != "" {

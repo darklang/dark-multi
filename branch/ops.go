@@ -262,11 +262,26 @@ func CreateWithProgress(name string, onProgress func(status string)) (*Branch, e
 	// Ensure remote points to GitHub fork
 	exec.Command("git", "-C", b.Path, "remote", "set-url", "origin", githubFork).Run()
 
+	// Also add upstream remote pointing to darklang/dark
+	exec.Command("git", "-C", b.Path, "remote", "add", "upstream", "git@github.com:darklang/dark.git").Run()
+
+	// Fetch from both remotes
 	exec.Command("git", "-C", b.Path, "fetch", "origin").Run()
-	checkoutCmd := exec.Command("git", "-C", b.Path, "checkout", "-b", name, "origin/main")
+	exec.Command("git", "-C", b.Path, "fetch", "upstream").Run()
+
+	// Hard reset to upstream/main to ensure clean state (ignore any changes from source repo)
+	exec.Command("git", "-C", b.Path, "checkout", "main").Run()
+	exec.Command("git", "-C", b.Path, "reset", "--hard", "upstream/main").Run()
+
+	// Create new branch from clean main
+	checkoutCmd := exec.Command("git", "-C", b.Path, "checkout", "-b", name)
 	if err := checkoutCmd.Run(); err != nil {
-		exec.Command("git", "-C", b.Path, "checkout", "-b", name, "main").Run()
+		// Branch might already exist, just check it out
+		exec.Command("git", "-C", b.Path, "checkout", name).Run()
 	}
+
+	// Clean any untracked files
+	exec.Command("git", "-C", b.Path, "clean", "-fd").Run()
 
 	b.WriteMetadata(instanceID)
 	return b, nil
