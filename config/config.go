@@ -124,3 +124,38 @@ func SetGitHubFork(url string) error {
 	forkFile := filepath.Join(ConfigDir, "github-fork")
 	return os.WriteFile(forkFile, []byte(url+"\n"), 0600)
 }
+
+// GetMaxConcurrent returns max concurrent containers from config.
+func GetMaxConcurrent() int {
+	// Check environment first
+	if val := os.Getenv("DARK_MULTI_MAX_CONCURRENT"); val != "" {
+		if i, err := strconv.Atoi(val); err == nil && i > 0 {
+			return i
+		}
+	}
+
+	// Check config file
+	maxFile := filepath.Join(ConfigDir, "max-concurrent")
+	if data, err := os.ReadFile(maxFile); err == nil {
+		if i, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && i > 0 {
+			return i
+		}
+	}
+
+	// Default to suggested based on system resources
+	return SuggestMaxInstances()
+}
+
+// SetMaxConcurrent saves max concurrent containers to config.
+func SetMaxConcurrent(n int) error {
+	os.MkdirAll(ConfigDir, 0755)
+	maxFile := filepath.Join(ConfigDir, "max-concurrent")
+	return os.WriteFile(maxFile, []byte(strconv.Itoa(n)+"\n"), 0644)
+}
+
+// IsFirstRun returns true if this is the first time running multi.
+func IsFirstRun() bool {
+	maxFile := filepath.Join(ConfigDir, "max-concurrent")
+	_, err := os.Stat(maxFile)
+	return os.IsNotExist(err)
+}

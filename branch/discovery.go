@@ -42,8 +42,9 @@ func FindNextInstanceID() int {
 }
 
 // FindSourceRepo finds a repo to clone from.
+// Always clones from 'main' or upstream - never from other branches to avoid inheriting changes.
 func FindSourceRepo() string {
-	// Check DARK_SOURCE
+	// Check DARK_SOURCE (explicit override)
 	if config.DarkSource != config.DarkRoot {
 		gitPath := filepath.Join(config.DarkSource, ".git")
 		if info, err := os.Stat(gitPath); err == nil && info.IsDir() {
@@ -52,21 +53,14 @@ func FindSourceRepo() string {
 	}
 
 	// Check for 'main' branch (must be fully cloned - has devcontainer.json)
+	// Only use 'main' - never use other branches as source
 	mainPath := filepath.Join(config.DarkRoot, "main")
 	devcontainerPath := filepath.Join(mainPath, ".devcontainer", "devcontainer.json")
 	if _, err := os.Stat(devcontainerPath); err == nil {
 		return mainPath
 	}
 
-	// Check any existing managed branch (must be fully cloned)
-	for _, b := range GetManagedBranches() {
-		devcontainer := filepath.Join(b.Path, ".devcontainer", "devcontainer.json")
-		if _, err := os.Stat(devcontainer); err == nil {
-			return b.Path
-		}
-	}
-
-	// Fall back to GitHub
+	// Fall back to GitHub upstream - will clone fresh from origin/main
 	return "git@github.com:darklang/dark.git"
 }
 

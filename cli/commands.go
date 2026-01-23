@@ -12,6 +12,7 @@ import (
 	"github.com/darklang/dark-multi/dns"
 	"github.com/darklang/dark-multi/inotify"
 	"github.com/darklang/dark-multi/proxy"
+	"github.com/darklang/dark-multi/queue"
 	"github.com/darklang/dark-multi/tui"
 )
 
@@ -50,6 +51,7 @@ TUI shortcuts:
 	rootCmd.AddCommand(stopCmd())
 	rootCmd.AddCommand(rmCmd())
 	rootCmd.AddCommand(setForkCmd())
+	rootCmd.AddCommand(queueCmd())
 
 	return rootCmd
 }
@@ -304,4 +306,105 @@ Current setting can be viewed with:
 			fmt.Printf("\033[0;32m✓\033[0m GitHub fork set to: %s\n", url)
 		},
 	}
+}
+
+func queueCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "queue <action>",
+		Short: "Manage the task queue",
+		Long: `Manage the automated task queue.
+
+Actions:
+  init    Initialize queue with predefined tasks
+  ls      List all tasks in queue
+  add     Add a task (multi queue add <id> <prompt>)
+  status  Show queue status summary
+  start   Start the background queue processor
+  process Run one processing cycle (start next task if slot available)`,
+		Args: cobra.MinimumNArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			action := args[0]
+			q := queue.Get()
+
+			switch action {
+			case "init":
+				fmt.Println("Initializing task queue...")
+				if err := queue.PopulateInitialQueue(); err != nil {
+					fmt.Fprintf(os.Stderr, "\033[0;31merror:\033[0m %v\n", err)
+					os.Exit(1)
+				}
+				tasks := q.GetAll()
+				fmt.Printf("\033[0;32m✓\033[0m Queue initialized with %d tasks\n", len(tasks))
+
+				// Show summary by status
+				ready := len(q.GetByStatus(queue.StatusReady))
+				needsPrompt := len(q.GetByStatus(queue.StatusNeedsPrompt))
+				fmt.Printf("  %d ready, %d need prompts\n", ready, needsPrompt)
+
+			case "ls":
+				tasks := q.GetAll()
+				if len(tasks) == 0 {
+					fmt.Println("Queue is empty. Run 'multi queue init' to populate.")
+					return
+				}
+
+				fmt.Printf("%-25s %-15s %s\n", "ID", "STATUS", "NAME")
+				fmt.Println("─────────────────────────────────────────────────────────────")
+				for _, t := range tasks {
+					fmt.Printf("%-25s %s %-12s %s\n", t.ID, t.Status.Icon(), t.Status.Display(), t.Name)
+				}
+
+			case "status":
+				tasks := q.GetAll()
+				running := q.CountRunning()
+				ready := len(q.GetByStatus(queue.StatusReady))
+				waiting := len(q.GetByStatus(queue.StatusWaiting))
+				done := len(q.GetByStatus(queue.StatusDone))
+				needsPrompt := len(q.GetByStatus(queue.StatusNeedsPrompt))
+				maxConcurrent := config.GetMaxConcurrent()
+
+				fmt.Printf("Queue Status:\n")
+				fmt.Printf("  🔄 Running:      %d / %d max\n", running, maxConcurrent)
+				fmt.Printf("  ⏳ Ready:        %d\n", ready)
+				fmt.Printf("  📝 Needs Prompt: %d\n", needsPrompt)
+				fmt.Printf("  ⏸️  Waiting:      %d\n", waiting)
+				fmt.Printf("  ✅ Done:         %d\n", done)
+				fmt.Printf("  ─────────────────\n")
+				fmt.Printf("  Total:          %d\n", len(tasks))
+
+			case "add":
+				if len(args) < 3 {
+					fmt.Fprintln(os.Stderr, "Usage: multi queue add <id> <prompt>")
+					os.Exit(1)
+				}
+				id := args[1]
+				prompt := args[2]
+				q.Add(id, id, prompt, 50)
+				q.Save()
+				fmt.Printf("\033[0;32m✓\033[0m Added task: %s\n", id)
+
+			case "start":
+				fmt.Println("Starting queue processor...")
+				queue.StartProcessor()
+				fmt.Println("\033[0;32m✓\033[0m Queue processor started")
+				fmt.Println("Press Ctrl+C to stop")
+				// Block forever (processor runs in background)
+				select {}
+
+			case "process":
+				fmt.Println("Processing queue once...")
+				if err := queue.ProcessOnce(); err != nil {
+					fmt.Fprintf(os.Stderr, "\033[0;31merror:\033[0m %v\n", err)
+					os.Exit(1)
+				}
+				fmt.Println("\033[0;32m✓\033[0m Done")
+
+			default:
+				fmt.Fprintf(os.Stderr, "Unknown action: %s\nUse: init, ls, status, add, start, process\n", action)
+				os.Exit(1)
+			}
+		},
+	}
+
+	return cmd
 }

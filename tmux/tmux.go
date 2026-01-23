@@ -48,8 +48,8 @@ func OpenClaude(branchName, containerID string) error {
 		}
 		exec.Command("tmux", "set-option", "-t", session, "-g", "mouse", "on").Run()
 
-		// Start bash in container, then run claude
-		dockerBash := fmt.Sprintf("docker exec -it -w /home/dark/app %s bash", containerID)
+		// Start bash in container with API key, then run claude
+		dockerBash := dockerExecWithEnv(containerID)
 		exec.Command("tmux", "send-keys", "-t", session, dockerBash, "Enter").Run()
 		exec.Command("tmux", "send-keys", "-t", session, "sleep 1 && claude --dangerously-skip-permissions", "Enter").Run()
 	}
@@ -72,12 +72,22 @@ func OpenTerminal(branchName, containerID string) error {
 		}
 		exec.Command("tmux", "set-option", "-t", session, "-g", "mouse", "on").Run()
 
-		// Start bash in container
-		dockerBash := fmt.Sprintf("docker exec -it -w /home/dark/app %s bash", containerID)
+		// Start bash in container with API key
+		dockerBash := dockerExecWithEnv(containerID)
 		exec.Command("tmux", "send-keys", "-t", session, dockerBash, "Enter").Run()
 	}
 
 	return openInTerminal(session)
+}
+
+// dockerExecWithEnv returns the docker exec command with ANTHROPIC_API_KEY passed through.
+func dockerExecWithEnv(containerID string) string {
+	apiKey := config.GetAnthropicAPIKey()
+	if apiKey != "" {
+		// Use single quotes to prevent shell interpretation of special characters
+		return fmt.Sprintf("docker exec -it -e ANTHROPIC_API_KEY='%s' -w /home/dark/app %s bash", apiKey, containerID)
+	}
+	return fmt.Sprintf("docker exec -it -w /home/dark/app %s bash", containerID)
 }
 
 // openInTerminal opens a tmux session in a terminal window.
@@ -101,6 +111,8 @@ func CapturePaneContent(branchName string, lines int) string {
 	if !sessionExists(session) {
 		return ""
 	}
+
+	// Capture last N lines from scrollback
 	cmd := exec.Command("tmux", "capture-pane", "-t", session, "-p", "-S", fmt.Sprintf("-%d", lines))
 	out, err := cmd.Output()
 	if err != nil {
@@ -222,6 +234,43 @@ func detectTerminal() string {
 	return "xterm"
 }
 
+// StartRalphLoop starts the Ralph loop in the Claude session (headless).
+// Kills any existing session and starts fresh. Does NOT open a terminal window.
+// Use OpenClaude() to view the session.
+func StartRalphLoop(branchName, containerID string) error {
+	if !IsAvailable() {
+		return fmt.Errorf("tmux not available")
+	}
+
+	session := sessionName(branchName, SessionClaude)
+
+	// Kill existing session - cleaner than trying to interrupt
+	if sessionExists(session) {
+		exec.Command("tmux", "kill-session", "-t", session).Run()
+	}
+
+	// Create fresh session
+	if err := exec.Command("tmux", "new-session", "-d", "-s", session).Run(); err != nil {
+		return fmt.Errorf("failed to create session: %w", err)
+	}
+	exec.Command("tmux", "set-option", "-t", session, "-g", "mouse", "on").Run()
+
+	// Set up pipe-pane to log all output for summarization
+	exec.Command("tmux", "pipe-pane", "-t", session, "-o", "cat >> /tmp/claude-output-"+branchName+".log").Run()
+
+	// Start bash in container with API key, then run ralph
+	dockerBash := dockerExecWithEnv(containerID)
+	exec.Command("tmux", "send-keys", "-t", session, dockerBash, "Enter").Run()
+	exec.Command("tmux", "send-keys", "-t", session, "sleep 1 && .claude-task/ralph.sh", "Enter").Run()
+
+	return nil // Headless - no terminal window opened
+}
+
+// GetOutputLogPath returns the path to the Claude output log for a branch.
+func GetOutputLogPath(branchName string) string {
+	return "/tmp/claude-output-" + branchName + ".log"
+}
+
 // Legacy compatibility
 
 // BranchSessionExists returns true if the Claude session exists (for grid status).
@@ -244,7 +293,7 @@ func CreateBranchSession(branchName string, containerID string, branchPath strin
 		return err
 	}
 	exec.Command("tmux", "set-option", "-t", session, "-g", "mouse", "on").Run()
-	dockerBash := fmt.Sprintf("docker exec -it -w /home/dark/app %s bash", containerID)
+	dockerBash := dockerExecWithEnv(containerID)
 	exec.Command("tmux", "send-keys", "-t", session, dockerBash, "Enter").Run()
 	exec.Command("tmux", "send-keys", "-t", session, "sleep 1 && claude --dangerously-skip-permissions", "Enter").Run()
 	return nil

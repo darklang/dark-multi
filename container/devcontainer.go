@@ -192,18 +192,11 @@ func GenerateOverrideConfig(b BranchInfo) (string, error) {
 	cfg["runArgs"] = newRunArgs
 
 	// Override mounts with branch-specific volumes
-	homeDir, _ := os.UserHomeDir()
-	claudeDir := filepath.Join(homeDir, ".claude")
-	claudeJson := filepath.Join(homeDir, ".claude.json")
-
+	// Note: We do NOT mount ~/.claude or ~/.claude.json - auth is via ANTHROPIC_API_KEY env var
 	mounts := []interface{}{
 		fmt.Sprintf("type=volume,src=dark_nuget_%s,dst=/home/dark/.nuget", name),
 		fmt.Sprintf("type=volume,src=dark-vscode-ext-%s,dst=/home/dark/.vscode-server/extensions", name),
 		fmt.Sprintf("type=volume,src=dark-vscode-ext-insiders-%s,dst=/home/dark/.vscode-server-insiders/extensions", name),
-		// Mount Claude credentials and config (shared across branches)
-		fmt.Sprintf("type=bind,src=%s,dst=/home/dark/.claude,consistency=cached", claudeDir),
-		// Mount .claude.json for auth/theme (writable - Claude needs to save settings)
-		fmt.Sprintf("type=bind,src=%s,dst=/home/dark/.claude.json", claudeJson),
 	}
 	// Note: We intentionally do NOT mount ~/.ssh or ~/.gitconfig to avoid leaking credentials.
 	// Git identity (user.name/user.email) is set via postCreateCommand below.
@@ -231,8 +224,13 @@ func GenerateOverrideConfig(b BranchInfo) (string, error) {
 		setupCmds = append(setupCmds, fmt.Sprintf("git config --global user.email %q", gitEmail))
 	}
 
-	// Ensure Claude is installed (auth comes from mounted .claude.json)
+	// Ensure Claude is installed (auth via ANTHROPIC_API_KEY passed at runtime)
 	setupCmds = append(setupCmds, "sudo npm install -g @anthropic-ai/claude-code 2>/dev/null || true")
+
+	// Pre-seed Claude settings and clear any OAuth tokens
+	// This creates settings that tell Claude to use API key from env and removes any OAuth credentials
+	claudeSettingsCmd := `mkdir -p /home/dark/.claude && rm -f /home/dark/.claude/.credentials.json /home/dark/.claude/credentials.json /home/dark/.claude/oauth* 2>/dev/null; echo '{"theme":"dark","hasCompletedOnboarding":true,"apiKeySource":"env","hasAcknowledgedCostThreshold":true}' > /home/dark/.claude/settings.json && chown -R dark:dark /home/dark/.claude`
+	setupCmds = append(setupCmds, claudeSettingsCmd)
 
 	if !strings.Contains(postCreate, "claude-code") {
 		setup := strings.Join(setupCmds, " && ")
@@ -244,21 +242,15 @@ func GenerateOverrideConfig(b BranchInfo) (string, error) {
 		cfg["postCreateCommand"] = postCreate
 	}
 
-	// Inject OAuth token if available (from ~/.config/dark-multi/oauth_token)
-	// Combined with mounted ~/.claude.json (which has hasCompletedOnboarding: true),
-	// this enables auto-auth without /login
-	oauthTokenPath := filepath.Join(config.ConfigDir, "oauth_token")
-	if tokenBytes, err := os.ReadFile(oauthTokenPath); err == nil {
-		token := strings.TrimSpace(string(tokenBytes))
-		if token != "" {
-			containerEnv, _ := cfg["containerEnv"].(map[string]interface{})
-			if containerEnv == nil {
-				containerEnv = make(map[string]interface{})
-			}
-			containerEnv["CLAUDE_CODE_OAUTH_TOKEN"] = token
-			cfg["containerEnv"] = containerEnv
-			logToFile("Injecting CLAUDE_CODE_OAUTH_TOKEN from %s", oauthTokenPath)
+	// Set ANTHROPIC_API_KEY in container environment
+	apiKey := config.GetAnthropicAPIKey()
+	if apiKey != "" {
+		containerEnv := make(map[string]interface{})
+		if existing, ok := cfg["containerEnv"].(map[string]interface{}); ok {
+			containerEnv = existing
 		}
+		containerEnv["ANTHROPIC_API_KEY"] = apiKey
+		cfg["containerEnv"] = containerEnv
 	}
 
 	// Write merged config
