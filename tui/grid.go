@@ -237,13 +237,13 @@ func (m GridModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "up":
-			cols := m.numCols()
+			_, cols := m.gridDimensions()
 			if m.cursor >= cols {
 				m.cursor -= cols
 			}
 
 		case "down":
-			cols := m.numCols()
+			_, cols := m.gridDimensions()
 			if m.cursor+cols < len(m.branches) {
 				m.cursor += cols
 			}
@@ -660,14 +660,55 @@ func (m GridModel) isRunning(name string) bool {
 	return false
 }
 
-func (m GridModel) numCols() int {
+// gridDimensions calculates optimal rows and cols for the grid.
+func (m GridModel) gridDimensions() (rows, cols int) {
 	pending := m.filteredPendingBranches()
 	n := len(m.branches) + len(pending)
 	if n == 0 {
-		return 1
+		return 1, 1
 	}
-	// 2 rows, ceil(n/2) columns
-	return (n + 1) / 2
+
+	// Get available space (reserve 5 lines for status/help)
+	availHeight := m.height - 5
+	if availHeight < 10 {
+		availHeight = 35
+	}
+	availWidth := m.width
+	if availWidth < 40 {
+		availWidth = 120
+	}
+
+	// Minimum cell dimensions for readability
+	minCellWidth := 40
+	minCellHeight := 8
+
+	// Calculate max possible rows and cols
+	maxRows := availHeight / minCellHeight
+	maxCols := availWidth / minCellWidth
+
+	if maxRows < 1 {
+		maxRows = 1
+	}
+	if maxCols < 1 {
+		maxCols = 1
+	}
+
+	// Find optimal grid that fits all items with balanced aspect ratio
+	// Try to fill screen while keeping cells readable
+	for rows = 1; rows <= maxRows; rows++ {
+		cols = (n + rows - 1) / rows // ceiling division
+		if cols <= maxCols {
+			// Check if cells would be too wide (prefer more rows for balance)
+			cellWidth := availWidth / cols
+			if cellWidth > 80 && rows < maxRows && rows*2 >= n {
+				continue // Try more rows for better balance
+			}
+			return rows, cols
+		}
+	}
+
+	// Fallback: use max rows
+	return maxRows, (n + maxRows - 1) / maxRows
 }
 
 // View renders the grid.
@@ -712,8 +753,8 @@ func (m GridModel) View() string {
 		return b.String()
 	}
 
-	// Calculate cell dimensions
-	cols := m.numCols()
+	// Calculate grid dimensions
+	numRows, numCols := m.gridDimensions()
 	width := m.width
 	if width < 40 {
 		width = 120
@@ -724,16 +765,19 @@ func (m GridModel) View() string {
 	}
 
 	// Reserve 5 lines for newline, status bar, newline, and help/message
-	cellHeight := (height - 5) / 2
+	cellHeight := (height - 5) / numRows
+	if cellHeight < 6 {
+		cellHeight = 6
+	}
 
-	// Build rows (2 rows)
+	// Build rows dynamically
 	var rows []string
 	branchIdx := 0
-	for row := 0; row < 2; row++ {
+	for row := 0; row < numRows; row++ {
 		var cells []string
 		remainingWidth := width
-		for col := 0; col < cols; col++ {
-			cellWidth := remainingWidth / (cols - col)
+		for col := 0; col < numCols; col++ {
+			cellWidth := remainingWidth / (numCols - col)
 			remainingWidth -= cellWidth
 
 			if branchIdx < len(m.branches) {

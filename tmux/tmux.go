@@ -82,7 +82,7 @@ func OpenTerminal(branchName, containerID string) error {
 
 // dockerExecWithEnv returns the docker exec command with ANTHROPIC_API_KEY passed through.
 func dockerExecWithEnv(containerID string) string {
-	apiKey := os.Getenv("ANTHROPIC_API_KEY")
+	apiKey := config.GetAnthropicAPIKey()
 	if apiKey != "" {
 		return fmt.Sprintf("docker exec -it -e ANTHROPIC_API_KEY=%s -w /home/dark/app %s bash", apiKey, containerID)
 	}
